@@ -4,7 +4,7 @@ QR Code Backup is a command-line tool for archiving digital data as QR codes pri
 
 **Storage capacity: ~1.5 KB per printed page** at default settings (0.8mm density)
 
-[See example PDF](examples/3k_random_example.pdf)
+[See example PDF](examples/3k_example_rfc_1149.pdf)
 
 ## Features
 
