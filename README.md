@@ -6,14 +6,15 @@ A Python command-line tool for archiving digital data as QR codes printed on pap
 
 - **Encode any file** into multi-page PDF documents containing QR codes
 - **Decode scanned PDFs** back into the original file
+- **🆕 Password-based encryption** - AES-256-GCM with Argon2id key derivation
 - **Built-in error correction** (7% to 30%) to handle paper degradation
 - **Automatic compression** (bzip2) to maximize storage efficiency
 - **Checksum verification** ensures data integrity with MD5 validation
 - **Configurable density** - automatic QR version calculation for 2×2 grid layout
 - **Professional output** with headers showing page numbers and metadata
 - **Recovery mode** to extract partial data from damaged archives
-- **🆕 Order-independent decoding** - scan pages in any order, automatic reordering
-- **🆕 Mixed document detection** - immediate error if pages from different backups are mixed
+- **Order-independent decoding** - scan pages in any order, automatic reordering
+- **Mixed document detection** - immediate error if pages from different backups are mixed
 
 ## Use Cases
 
@@ -60,7 +61,7 @@ pip install -r requirements.txt
 
 Or install them individually:
 ```bash
-pip install qrcode[pil] Pillow pyzbar pypdf reportlab pdf2image opencv-python numpy click pytest pytest-cov
+pip install qrcode[pil] Pillow pyzbar pypdf reportlab pdf2image opencv-python numpy click cryptography argon2-cffi pytest pytest-cov
 ```
 
 ### Verify Installation
@@ -85,6 +86,16 @@ python qr_code_backup.py encode mydata.txt -o backup.pdf
 
 This creates `backup.pdf` with QR codes containing your data.
 
+### Encode with Encryption
+
+Protect sensitive data with password-based encryption:
+
+```bash
+python qr_code_backup.py encode secrets.txt -o backup.pdf --encrypt
+```
+
+You'll be prompted to enter a password. The data is encrypted with AES-256-GCM before encoding.
+
 ### Decode a File
 
 Decode a scanned PDF back into the original file:
@@ -93,7 +104,7 @@ Decode a scanned PDF back into the original file:
 python qr_code_backup.py decode backup.pdf -o recovered.txt
 ```
 
-This extracts the data and saves it as `recovered.txt`.
+This extracts the data and saves it as `recovered.txt`. If the PDF is encrypted, you'll be prompted for the password.
 
 ### View Metadata
 
@@ -116,15 +127,18 @@ python qr_code_backup.py encode <input_file> [OPTIONS]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-o, --output <path>` | Output PDF file path | `<input_file>.qr.pdf` |
+| `--encrypt` | Enable encryption (prompts for password) | disabled |
+| `--argon2-time <n>` | Argon2 time cost parameter | 3 |
+| `--argon2-memory <kb>` | Argon2 memory cost in KiB | 65536 (64MB) |
+| `--argon2-parallelism <n>` | Argon2 parallelism parameter | 4 |
 | `--error-correction <level>` | Error correction: L(7%), M(15%), Q(25%), H(30%) | M (15%) |
-| `--qr-version <1-40>` | QR code version (size) | auto |
-| `--dpi <value>` | Output resolution | 300 |
-| `--qr-size <mm>` | Physical QR code size in millimeters | 60 |
-| `--qrs-per-page <RxC>` | Grid layout (rows x cols) | 3x3 |
+| `--module-size <mm>` | QR module size in millimeters | 0.9 |
+| `--page-width <mm>` | Page width in millimeters | 215.9 (Letter) |
+| `--page-height <mm>` | Page height in millimeters | 279.4 (Letter) |
+| `--margin <mm>` | Page margin in millimeters | 20 |
+| `--spacing <mm>` | Spacing between QR codes | 5 |
 | `--title <text>` | Title for page headers | filename |
-| `--page-size <size>` | Paper size: A4, LETTER, LEGAL | A4 |
 | `--no-header` | Disable header text on pages | false |
-| `--compression <type>` | Compression: none, gzip, bzip2 | gzip |
 
 **Examples:**
 
@@ -132,17 +146,17 @@ python qr_code_backup.py encode <input_file> [OPTIONS]
 # Basic encoding
 python qr_code_backup.py encode document.pdf
 
+# Encrypt sensitive data
+python qr_code_backup.py encode passwords.txt --encrypt
+
 # Maximum error correction for long-term storage
 python qr_code_backup.py encode important.txt --error-correction H
 
-# Higher density (more QR codes per page)
-python qr_code_backup.py encode data.bin --qrs-per-page 4x4 --qr-size 50
+# Encrypted with custom Argon2 parameters (slower but more secure)
+python qr_code_backup.py encode keys.txt --encrypt --argon2-time 5 --argon2-memory 131072
 
-# No compression for already compressed files
-python qr_code_backup.py encode archive.zip --compression none
-
-# Custom title and Letter paper size
-python qr_code_backup.py encode keys.txt --title "Encryption Keys" --page-size LETTER
+# Custom title
+python qr_code_backup.py encode data.txt --title "Backup 2024-01-15"
 ```
 
 ### Decode Command
@@ -155,7 +169,8 @@ python qr_code_backup.py decode <input_pdf> [OPTIONS]
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-o, --output <path>` | Output file path | from metadata |
+| `-o, --output <path>` | Output file path (required) | - |
+| `--password <pass>` | Decryption password (prompts if encrypted) | prompt |
 | `--verify` | Verify checksums (enabled by default) | true |
 | `--recovery-mode` | Attempt recovery from damaged QR codes | false |
 | `--force` | Overwrite existing output file | false |
@@ -164,13 +179,16 @@ python qr_code_backup.py decode <input_pdf> [OPTIONS]
 
 ```bash
 # Basic decoding
-python qr_code_backup.py decode backup.pdf
+python qr_code_backup.py decode backup.pdf -o recovered.txt
 
-# Decode to specific filename
-python qr_code_backup.py decode scanned_backup.pdf -o recovered_data.txt
+# Decode encrypted backup (will prompt for password)
+python qr_code_backup.py decode encrypted.pdf -o secrets.txt
+
+# Decode with password on command line
+python qr_code_backup.py decode encrypted.pdf -o secrets.txt --password mypass
 
 # Attempt recovery from damaged backup
-python qr_code_backup.py decode damaged.pdf --recovery-mode
+python qr_code_backup.py decode damaged.pdf -o recovered.txt --recovery-mode
 
 # Overwrite existing file
 python qr_code_backup.py decode backup.pdf -o data.txt --force
@@ -189,14 +207,15 @@ Example output:
 ============================================================
 QR CODE BACKUP METADATA
 ============================================================
-Format Version:      1.0
-Original Filename:   important_data.txt
+Format Version:      Binary v1.0
+Encryption:          Yes (AES-256-GCM)
+Argon2 Parameters:   time=3, memory=65536KiB, parallelism=4
 Original File Size:  25,678 bytes
-Total Pages:         3
-Compression:         gzip
-Checksum Type:       sha256
-File Checksum:       a1b2c3d4e5f6...
-QR Codes per Page:   ~9
+MD5 Hash:            3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+Page Number:         1
+Compression:         bzip2
+QR Codes per Page:   ~4
+Total QR Codes:      12
 PDF Pages:           3
 ============================================================
 ```
@@ -206,45 +225,102 @@ PDF Pages:           3
 ### Encoding Process
 
 1. **Read file** - Load the input file into memory
-2. **Compress** - Apply compression (gzip by default) to reduce size
-3. **Calculate checksums** - Generate SHA-256 hash of original file
-4. **Split into chunks** - Divide data into chunks that fit in QR codes
-5. **Create metadata** - Add page numbers, checksums, filename to each chunk
-6. **Generate QR codes** - Create QR code images with error correction
-7. **Build PDF** - Arrange QR codes in a grid with headers on each page
+2. **Compress** - Apply bzip2 compression to reduce size
+3. **Encrypt (optional)** - Encrypt compressed data with AES-256-GCM if `--encrypt` is used
+4. **Calculate MD5** - Generate MD5 hash of (possibly encrypted) compressed data
+5. **Split into chunks** - Divide data into chunks that fit in QR codes
+6. **Create metadata** - Add page numbers, MD5 hash, encryption metadata (if encrypted) to each chunk
+7. **Generate QR codes** - Create QR code images with error correction
+8. **Build PDF** - Arrange QR codes in a grid with headers on each page
 
 ### Decoding Process
 
-1. **Load PDF** - Convert PDF pages to images (300 DPI)
+1. **Load PDF** - Convert PDF pages to images
 2. **Scan QR codes** - Detect and decode all QR codes using pyzbar
-3. **Parse metadata** - Extract JSON data from each QR code
-4. **Sort and validate** - Order chunks by page number, verify checksums
-5. **Reassemble** - Concatenate chunk data in correct order
-6. **Decompress** - Uncompress data using stored compression method
-7. **Verify** - Check final file checksum matches expected value
-8. **Write output** - Save recovered file
+3. **Parse metadata** - Extract binary data from each QR code
+4. **Validate MD5** - Check for mixed documents using MD5 hash
+5. **Sort chunks** - Order chunks by page number (order-independent)
+6. **Reassemble** - Concatenate chunk data in correct order
+7. **Verify MD5** - Check MD5 hash of reassembled data
+8. **Decrypt (if encrypted)** - Decrypt using provided password
+9. **Decompress** - Uncompress data using bzip2
+10. **Write output** - Save recovered file
 
 ### Data Format
 
-Each QR code contains a JSON structure:
+Each QR code contains binary data with the following structure:
 
-```json
-{
-  "format_version": "1.0",
-  "file_name": "mydata.txt",
-  "file_size": 12345,
-  "total_pages": 5,
-  "page_number": 1,
-  "chunk_size": 1100,
-  "checksum_type": "sha256",
-  "file_checksum": "abc123...",
-  "chunk_checksum": "def456...",
-  "compression": "gzip",
-  "data": "<base64_encoded_chunk>"
-}
+**Unencrypted chunks:**
+```
+[0x00] [MD5:16] [Page#:2] [FileSize:4 (page 1 only)] [Data:variable]
 ```
 
+**Encrypted chunks (page 1):**
+```
+[0x01] [MD5:16] [Page#:2] [FileSize:4] [Salt:16] [Time:4] [Memory:4]
+[Parallelism:4] [VerifyHash:32] [Nonce:12] [EncryptedData:variable]
+```
+
+**Encrypted chunks (page 2+):**
+```
+[0x01] [MD5:16] [Page#:2] [EncryptedData:variable]
+```
+
+All multi-byte integers are big-endian. MD5 is calculated on the (possibly encrypted) compressed data.
+
 ## New Features (Phase 2)
+
+### Password-Based Encryption
+
+Protect sensitive data with military-grade encryption before encoding to QR codes.
+
+**Security Features:**
+- **AES-256-GCM** authenticated encryption (industry standard, quantum-resistant symmetric cipher)
+- **Argon2id** key derivation (memory-hard, resistant to GPU/ASIC attacks)
+- **BLAKE2b** password verification (fast pre-check before decryption attempt)
+- **Constant-time comparison** prevents timing attacks
+
+**Example:**
+```bash
+# Encode with encryption
+python qr_code_backup.py encode passwords.txt -o backup.pdf --encrypt
+Enter encryption password: ********
+Repeat for confirmation: ********
+
+# Output:
+# Encryption: AES-256-GCM with Argon2id (time=3, memory=65536KiB, parallelism=4)
+# Encoding: passwords.txt
+# Encryption: Enabled (AES-256-GCM)
+# ...
+
+# Decode encrypted backup
+python qr_code_backup.py decode backup.pdf -o recovered.txt
+
+# Output:
+# Document is encrypted (AES-256-GCM)
+# Enter decryption password: ********
+# Decrypting...
+# Decryption successful
+# Decryption: SUCCESS
+# Verification: PASS
+```
+
+**Benefits:**
+- Encryption happens before QR encoding - printed QR codes contain ciphertext
+- Password never stored - only a verification hash (using BLAKE2b)
+- Wrong password detected immediately - no wasted time on decryption
+- Authenticated encryption (GCM) - tampering is detected automatically
+- Memory-hard KDF - protects against brute-force attacks
+- Tunable Argon2 parameters for security/performance trade-off
+
+**Argon2 Tuning:**
+```bash
+# Faster (less secure, for testing)
+python qr_code_backup.py encode test.txt --encrypt --argon2-time 2 --argon2-memory 32768
+
+# Slower (more secure, for critical data)
+python qr_code_backup.py encode secrets.txt --encrypt --argon2-time 5 --argon2-memory 131072
+```
 
 ### Order-Independent Decoding
 
@@ -508,15 +584,24 @@ A 100-page document (~900 QR codes):
 
 ## Advanced Usage
 
-### Encrypting Before Backup
+### Encryption Best Practices
 
-For sensitive data, encrypt before encoding:
+**Built-in encryption is recommended for most use cases:**
 
 ```bash
-# Encrypt with GPG
-gpg -c secrets.txt  # Creates secrets.txt.gpg
+# Use built-in encryption (recommended)
+python qr_code_backup.py encode secrets.txt -o backup.pdf --encrypt
 
-# Encode encrypted file
+# For maximum security, increase Argon2 parameters
+python qr_code_backup.py encode critical_data.txt -o backup.pdf --encrypt \
+  --argon2-time 5 --argon2-memory 131072 --argon2-parallelism 8
+```
+
+**External encryption (if you need specific cipher suites):**
+
+```bash
+# Encrypt with GPG first, then encode
+gpg -c secrets.txt  # Creates secrets.txt.gpg
 python qr_code_backup.py encode secrets.txt.gpg -o backup.pdf
 
 # To recover: decode then decrypt
@@ -579,10 +664,18 @@ For issues, questions, or suggestions:
 
 ## Version History
 
-### 1.0.0 (Current)
+### 2.0.0 (Current - Phase 2)
+- Password-based encryption (AES-256-GCM with Argon2id)
+- Order-independent decoding (scan pages in any order)
+- Mixed document detection (prevents accidental page mixing)
+- Binary chunk format (replaces JSON for efficiency)
+- MD5-based document validation
+- Comprehensive encryption test suite
+
+### 1.0.0 (Phase 1)
 - Initial release
 - Encode and decode functionality
 - Support for all error correction levels
-- Compression support (gzip, bzip2)
+- Compression support (bzip2)
 - Recovery mode for damaged backups
 - Comprehensive testing suite

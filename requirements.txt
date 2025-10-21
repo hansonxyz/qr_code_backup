@@ -18,6 +18,10 @@ numpy>=1.24.0
 # CLI framework
 click>=8.1.0
 
+# Encryption and security
+cryptography>=41.0.0
+argon2-cffi>=23.1.0
+
 # Testing dependencies
 pytest>=7.4.0
 pytest-cov>=4.1.0

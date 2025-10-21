@@ -138,6 +138,198 @@ def decompress_data(data: bytes, compression: str) -> bytes:
         raise ValueError(f"Unsupported compression: {compression}")
 
 
+# ============================================================================
+# Encryption Functions (AES-256-GCM with Argon2id Key Derivation)
+# ============================================================================
+
+def derive_key(password: str, salt: bytes, time_cost: int = 3,
+               memory_cost: int = 65536, parallelism: int = 4) -> bytes:
+    """Derive 32-byte encryption key from password using Argon2id.
+
+    Argon2id is a memory-hard key derivation function that is resistant
+    to GPU and ASIC attacks. It won the Password Hashing Competition.
+
+    Args:
+        password: User password (string)
+        salt: 16-byte random salt
+        time_cost: Number of iterations (default: 3)
+        memory_cost: Memory in KB (default: 65536 = 64MB)
+        parallelism: Number of threads (default: 4)
+
+    Returns:
+        32-byte derived key for AES-256
+
+    Raises:
+        ImportError: If argon2-cffi is not installed
+    """
+    try:
+        from argon2 import low_level
+    except ImportError:
+        raise ImportError(
+            "argon2-cffi is required for encryption. "
+            "Install it with: pip install argon2-cffi>=23.1.0"
+        )
+
+    hash_result = low_level.hash_secret_raw(
+        secret=password.encode('utf-8'),
+        salt=salt,
+        time_cost=time_cost,
+        memory_cost=memory_cost,
+        parallelism=parallelism,
+        hash_len=32,
+        type=low_level.Type.ID  # Argon2id
+    )
+    return hash_result
+
+
+def create_verification_hash(key: bytes) -> bytes:
+    """Create verification hash from derived key using BLAKE2b.
+
+    The verification hash allows fast password verification without
+    attempting full decryption. It's stored in the PDF metadata.
+
+    Args:
+        key: 32-byte derived key
+
+    Returns:
+        32-byte BLAKE2b hash of the key
+    """
+    return hashlib.blake2b(key, digest_size=32).digest()
+
+
+def verify_password(password: str, salt: bytes, verification_hash: bytes,
+                   time_cost: int, memory_cost: int, parallelism: int) -> bool:
+    """Verify password against stored verification hash.
+
+    This provides fast password verification before attempting decryption.
+    Uses constant-time comparison to prevent timing attacks.
+
+    Args:
+        password: User-provided password
+        salt: Salt from page 1 metadata
+        verification_hash: Verification hash from page 1 metadata
+        time_cost, memory_cost, parallelism: Argon2 parameters from metadata
+
+    Returns:
+        True if password is correct, False otherwise
+    """
+    derived_key = derive_key(password, salt, time_cost, memory_cost, parallelism)
+    computed_hash = create_verification_hash(derived_key)
+
+    # Constant-time comparison to prevent timing attacks
+    import hmac
+    return hmac.compare_digest(computed_hash, verification_hash)
+
+
+def encrypt_data(data: bytes, password: str, time_cost: int = 3,
+                memory_cost: int = 65536, parallelism: int = 4) -> dict:
+    """Encrypt data with AES-256-GCM authenticated encryption.
+
+    AES-256-GCM provides both confidentiality and authenticity. The GCM
+    mode includes an authentication tag that detects any tampering.
+
+    Args:
+        data: Data to encrypt (compressed file data)
+        password: User password
+        time_cost: Argon2 time cost (default: 3)
+        memory_cost: Argon2 memory cost in KB (default: 65536 = 64MB)
+        parallelism: Argon2 parallelism (default: 4)
+
+    Returns:
+        Dictionary containing:
+            - salt: 16-byte random salt
+            - nonce: 12-byte random nonce for GCM
+            - verification_hash: 32-byte password verification hash
+            - time_cost, memory_cost, parallelism: Argon2 parameters
+            - ciphertext: Encrypted data with authentication tag
+
+    Raises:
+        ImportError: If cryptography is not installed
+    """
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        raise ImportError(
+            "cryptography is required for encryption. "
+            "Install it with: pip install cryptography>=41.0.0"
+        )
+
+    import os
+
+    # Generate cryptographically secure random salt and nonce
+    salt = os.urandom(16)  # 128 bits
+    nonce = os.urandom(12)  # 96 bits (recommended for GCM)
+
+    # Derive key from password using Argon2id
+    key = derive_key(password, salt, time_cost, memory_cost, parallelism)
+
+    # Create verification hash for fast password checking
+    verification_hash = create_verification_hash(key)
+
+    # Encrypt with AES-256-GCM
+    aesgcm = AESGCM(key)
+    ciphertext = aesgcm.encrypt(nonce, data, None)  # No additional associated data
+
+    return {
+        'salt': salt,
+        'nonce': nonce,
+        'verification_hash': verification_hash,
+        'time_cost': time_cost,
+        'memory_cost': memory_cost,
+        'parallelism': parallelism,
+        'ciphertext': ciphertext,
+    }
+
+
+def decrypt_data(ciphertext: bytes, password: str, salt: bytes, nonce: bytes,
+                verification_hash: bytes, time_cost: int, memory_cost: int,
+                parallelism: int) -> bytes:
+    """Decrypt data with AES-256-GCM.
+
+    Verifies the password first using the verification hash before attempting
+    decryption. If the ciphertext has been tampered with, decryption will fail
+    with an InvalidTag exception.
+
+    Args:
+        ciphertext: Encrypted data (includes GCM authentication tag)
+        password: User password
+        salt: 16-byte salt from metadata
+        nonce: 12-byte nonce from metadata
+        verification_hash: 32-byte verification hash from metadata
+        time_cost, memory_cost, parallelism: Argon2 parameters from metadata
+
+    Returns:
+        Decrypted plaintext data
+
+    Raises:
+        ValueError: If password is incorrect
+        cryptography.exceptions.InvalidTag: If data has been tampered with
+        ImportError: If cryptography is not installed
+    """
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        raise ImportError(
+            "cryptography is required for decryption. "
+            "Install it with: pip install cryptography>=41.0.0"
+        )
+
+    # Verify password first (fast check before expensive decryption)
+    if not verify_password(password, salt, verification_hash,
+                          time_cost, memory_cost, parallelism):
+        raise ValueError("Incorrect password")
+
+    # Derive key from password
+    key = derive_key(password, salt, time_cost, memory_cost, parallelism)
+
+    # Decrypt with AES-256-GCM
+    # Will raise InvalidTag if data has been tampered with
+    aesgcm = AESGCM(key)
+    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+
+    return plaintext
+
+
 def get_qr_modules(qr_version: int) -> int:
     """Get the number of modules (pixels) per side for a QR code version.
 
@@ -310,23 +502,32 @@ def calculate_chunk_size(qr_version: int, error_correction: str) -> int:
     return max(chunk_size, 100)  # Minimum 100 bytes per chunk
 
 
-def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2') -> List[bytes]:
-    """Split file into chunks with binary metadata headers.
+def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
+                 encrypt: bool = False, password: Optional[str] = None,
+                 argon2_time: int = 3, argon2_memory: int = 65536,
+                 argon2_parallelism: int = 4) -> List[bytes]:
+    """Split file into chunks with binary metadata headers and optional encryption.
 
-    Binary format:
-    - All pages: [MD5 hash: 16 bytes][Page number: 2 bytes uint16][Data: variable]
-    - Page 1 adds: [File size: 4 bytes uint32] after page number
+    Binary format (with encryption support):
+    - Page 1 (encrypted): [Flag:1][MD5:16][Page#:2][FileSize:4][Salt:16][TimeCost:4][MemoryCost:4][Parallelism:4][VerifyHash:32][Nonce:12][Data]
+    - Page 1 (unencrypted): [Flag:1][MD5:16][Page#:2][FileSize:4][Data]
+    - Other pages: [Flag:1][MD5:16][Page#:2][Data]
 
     Args:
         file_path: Path to file to encode
         chunk_size: Size of each data chunk in bytes (before metadata)
-        compression: Compression algorithm to use
+        compression: Compression algorithm to use ('none', 'gzip', 'bzip2')
+        encrypt: Enable encryption (default: False)
+        password: Password for encryption (required if encrypt=True)
+        argon2_time: Argon2 time cost (default: 3)
+        argon2_memory: Argon2 memory cost in KB (default: 65536 = 64MB)
+        argon2_parallelism: Argon2 parallelism (default: 4)
 
     Returns:
         List of binary chunks (each will be base64 encoded into QR codes)
 
     Raises:
-        ValueError: If file size exceeds 2^32 bytes or page count exceeds 2^16
+        ValueError: If file size exceeds 2^32 bytes, page count exceeds 2^16, or encrypt=True but no password
     """
     # Read entire file
     with open(file_path, 'rb') as f:
@@ -350,14 +551,39 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2') -
     else:
         data_to_chunk = file_data
 
-    # Calculate MD5 hash of compressed data (will be in every page)
+    # Optionally encrypt
+    encryption_metadata = None
+    if encrypt:
+        if password is None:
+            raise ValueError("Password required for encryption")
+
+        click.echo("Encrypting...")
+        enc_result = encrypt_data(
+            data_to_chunk,
+            password,
+            time_cost=argon2_time,
+            memory_cost=argon2_memory,
+            parallelism=argon2_parallelism
+        )
+        data_to_chunk = enc_result['ciphertext']
+        encryption_metadata = enc_result
+        click.echo(f"Encrypted with AES-256-GCM (Argon2id: t={argon2_time}, m={argon2_memory}KB, p={argon2_parallelism})")
+
+    # Calculate MD5 hash of (possibly encrypted) compressed data
     import hashlib
     file_md5 = hashlib.md5(data_to_chunk).digest()  # 16 bytes binary
 
     # Calculate total pages needed
-    # Page 1 has extra 4 bytes for file size, so adjust chunk size for first page
-    page1_data_size = chunk_size - 22  # MD5(16) + Page#(2) + FileSize(4)
-    other_page_data_size = chunk_size - 18  # MD5(16) + Page#(2)
+    # Account for encryption flag (1 byte) on all pages
+    # Page 1 has: Flag(1) + MD5(16) + Page#(2) + FileSize(4) + [Encryption metadata if encrypted]
+    if encrypt:
+        # Encrypted page 1: + Salt(16) + TimeCost(4) + MemoryCost(4) + Parallelism(4) + VerifyHash(32) + Nonce(12) = 72 bytes
+        page1_data_size = chunk_size - 95  # Flag(1) + MD5(16) + Page#(2) + FileSize(4) + EncMetadata(72)
+    else:
+        page1_data_size = chunk_size - 23  # Flag(1) + MD5(16) + Page#(2) + FileSize(4)
+
+    # Other pages: Flag(1) + MD5(16) + Page#(2)
+    other_page_data_size = chunk_size - 19
 
     if len(data_to_chunk) <= page1_data_size:
         # Fits in one page
@@ -374,6 +600,7 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2') -
     # Create chunks
     chunks = []
     offset = 0
+    encryption_flag = 0x01 if encrypt else 0x00
 
     for page_num in range(1, total_chunks + 1):
         # Determine chunk size for this page
@@ -386,8 +613,11 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2') -
         chunk_data = data_to_chunk[offset:offset + this_chunk_size]
         offset += len(chunk_data)
 
-        # Build binary chunk: [MD5][Page#][FileSize if page 1][Data]
+        # Build binary chunk
         chunk_binary = bytearray()
+
+        # Encryption flag (1 byte)
+        chunk_binary.append(encryption_flag)
 
         # MD5 hash (16 bytes)
         chunk_binary.extend(file_md5)
@@ -398,6 +628,15 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2') -
         # File size (4 bytes, big-endian uint32) - only on page 1
         if page_num == 1:
             chunk_binary.extend(file_size.to_bytes(4, byteorder='big'))
+
+            # Encryption metadata (only on page 1 if encrypted)
+            if encrypt:
+                chunk_binary.extend(encryption_metadata['salt'])  # 16 bytes
+                chunk_binary.extend(encryption_metadata['time_cost'].to_bytes(4, byteorder='big'))
+                chunk_binary.extend(encryption_metadata['memory_cost'].to_bytes(4, byteorder='big'))
+                chunk_binary.extend(encryption_metadata['parallelism'].to_bytes(4, byteorder='big'))
+                chunk_binary.extend(encryption_metadata['verification_hash'])  # 32 bytes
+                chunk_binary.extend(encryption_metadata['nonce'])  # 12 bytes
 
         # Data
         chunk_binary.extend(chunk_data)
@@ -582,11 +821,15 @@ def decode_qr_codes_from_image(image: np.ndarray) -> List[bytes]:
 
 
 def parse_binary_chunk(chunk_binary: bytes) -> Optional[Dict[str, Any]]:
-    """Parse binary chunk header.
+    """Parse binary chunk header with encryption support.
 
-    Binary format:
-    - All pages: [MD5: 16 bytes][Page#: 2 bytes uint16][Data: variable]
-    - Page 1 adds: [FileSize: 4 bytes uint32] after page#
+    Binary format (with encryption support):
+    - Page 1 (encrypted): [Flag:1][MD5:16][Page#:2][FileSize:4][Salt:16][TimeCost:4][MemoryCost:4][Parallelism:4][VerifyHash:32][Nonce:12][Data]
+    - Page 1 (unencrypted): [Flag:1][MD5:16][Page#:2][FileSize:4][Data]
+    - Other pages (encrypted): [Flag:1][MD5:16][Page#:2][Data]
+    - Other pages (unencrypted): [Flag:1][MD5:16][Page#:2][Data]
+
+    Encryption Flag: 0x00 = unencrypted, 0x01 = encrypted
 
     Args:
         chunk_binary: Binary chunk data
@@ -595,54 +838,90 @@ def parse_binary_chunk(chunk_binary: bytes) -> Optional[Dict[str, Any]]:
         Dictionary with parsed metadata, or None if invalid
     """
     try:
-        if len(chunk_binary) < 18:  # Minimum: MD5(16) + Page#(2)
+        offset = 0
+
+        # Minimum size check: Flag(1) + MD5(16) + Page#(2) = 19 bytes
+        if len(chunk_binary) < 19:
             return None
 
+        # Extract encryption flag (1 byte)
+        encrypted = chunk_binary[offset] != 0x00
+        offset += 1
+
         # Extract MD5 hash (16 bytes)
-        md5_hash = chunk_binary[:16]
+        md5_hash = chunk_binary[offset:offset+16]
+        offset += 16
 
         # Extract page number (2 bytes, big-endian uint16)
-        page_num = int.from_bytes(chunk_binary[16:18], byteorder='big')
+        page_num = int.from_bytes(chunk_binary[offset:offset+2], byteorder='big')
+        offset += 2
 
-        # Check if this is page 1 (has file size)
-        if page_num == 1:
-            if len(chunk_binary) < 22:  # MD5(16) + Page#(2) + FileSize(4)
-                return None
-            file_size = int.from_bytes(chunk_binary[18:22], byteorder='big')
-            data = chunk_binary[22:]
-        else:
-            file_size = None
-            data = chunk_binary[18:]
-
-        return {
+        result = {
+            'encrypted': encrypted,
             'md5_hash': md5_hash,
             'page_number': page_num,
-            'file_size': file_size,
-            'data': data
         }
+
+        # Page 1 has file size and possibly encryption metadata
+        if page_num == 1:
+            # Need at least file size (4 bytes)
+            if len(chunk_binary) < offset + 4:
+                return None
+
+            file_size = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+            offset += 4
+            result['file_size'] = file_size
+
+            if encrypted:
+                # Need encryption metadata: Salt(16) + TimeCost(4) + MemoryCost(4) + Parallelism(4) + VerifyHash(32) + Nonce(12) = 72 bytes
+                if len(chunk_binary) < offset + 72:
+                    return None
+
+                result['salt'] = chunk_binary[offset:offset+16]
+                offset += 16
+                result['time_cost'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+                offset += 4
+                result['memory_cost'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+                offset += 4
+                result['parallelism'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+                offset += 4
+                result['verification_hash'] = chunk_binary[offset:offset+32]
+                offset += 32
+                result['nonce'] = chunk_binary[offset:offset+12]
+                offset += 12
+        else:
+            result['file_size'] = None
+
+        # Data is everything after metadata
+        result['data'] = chunk_binary[offset:]
+
+        return result
     except Exception:
         return None
 
 
 def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
-                     recovery_mode: bool = False) -> Tuple[bytes, Dict[str, Any]]:
-    """Sort, validate, and reassemble binary chunks into original file.
+                     recovery_mode: bool = False,
+                     password: Optional[str] = None) -> Tuple[bytes, Dict[str, Any]]:
+    """Sort, validate, and reassemble binary chunks into original file with decryption support.
 
     Validates:
     - All chunks have the same MD5 hash (detects mixed documents)
     - Page sequence is correct (1, 2, 3, ... N with no gaps or wrong order)
+    - Decrypts data if encrypted (requires password)
     - Final decompressed data matches MD5 hash from chunks
 
     Args:
         chunk_binaries: List of binary chunk data
         verify: Verify MD5 consistency and sequence if True
         recovery_mode: Attempt recovery even with missing chunks or errors
+        password: Password for decryption (required if chunks are encrypted)
 
     Returns:
         Tuple of (file_data, report_dict)
 
     Raises:
-        ValueError: If chunks cannot be reassembled or validation fails
+        ValueError: If chunks cannot be reassembled, validation fails, or encrypted but no password
     """
     if not chunk_binaries:
         raise ValueError("No chunks provided")
@@ -733,10 +1012,46 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                 f"got {page_numbers[:10]}{'...' if len(page_numbers) > 10 else ''}"
             )
 
-    # Reassemble compressed data
+    # Reassemble compressed (possibly encrypted) data
     compressed_data = b''
     for chunk in parsed_chunks:
         compressed_data += chunk['data']
+
+    # Verify MD5 BEFORE decryption (MD5 is of encrypted data if encrypted)
+    if verify:
+        actual_md5 = hashlib.md5(compressed_data).digest()
+        if actual_md5 != reference_md5:
+            raise ValueError(
+                f"MD5 verification failed! "
+                f"Expected: {reference_md5.hex()}, "
+                f"Got: {actual_md5.hex()}. "
+                f"Data corruption detected."
+            )
+        report['md5_verified'] = True
+
+    # Check if encrypted and decrypt if needed
+    if page_1.get('encrypted'):
+        if password is None:
+            raise ValueError("Document is encrypted but no password provided")
+
+        click.echo("Decrypting...")
+        try:
+            compressed_data = decrypt_data(
+                compressed_data,
+                password,
+                page_1['salt'],
+                page_1['nonce'],
+                page_1['verification_hash'],
+                page_1['time_cost'],
+                page_1['memory_cost'],
+                page_1['parallelism']
+            )
+            report['decryption'] = 'success'
+            click.echo("Decryption successful")
+        except ValueError as e:
+            raise ValueError(f"Decryption failed: {e}")
+        except Exception as e:
+            raise ValueError(f"Decryption failed - data may be corrupted: {e}")
 
     # Decompress (hardcoded bzip2)
     try:
@@ -747,18 +1062,6 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
         # In recovery mode, return compressed data
         file_data = compressed_data
         report['decompression_failed'] = True
-
-    # Verify final file MD5 matches the MD5 in chunks
-    if verify and 'decompression_failed' not in report:
-        actual_md5 = hashlib.md5(compressed_data).digest()
-        if actual_md5 != reference_md5:
-            raise ValueError(
-                f"MD5 verification failed! "
-                f"Expected: {reference_md5.hex()}, "
-                f"Got: {actual_md5.hex()}. "
-                f"Data corruption detected."
-            )
-        report['md5_verified'] = True
 
     report['recovered_size'] = len(file_data)
     report['compression'] = 'bzip2'
@@ -801,16 +1104,32 @@ def cli():
               help='Title for page headers (default: filename)')
 @click.option('--no-header', is_flag=True,
               help='Disable header text on pages')
+@click.option('--encrypt', is_flag=True,
+              help='Encrypt the data before encoding (prompts for password)')
+@click.option('--argon2-time', type=int, default=3,
+              help='Argon2 time cost parameter [default: 3]')
+@click.option('--argon2-memory', type=int, default=65536,
+              help='Argon2 memory cost in KiB [default: 65536 (64MB)]')
+@click.option('--argon2-parallelism', type=int, default=4,
+              help='Argon2 parallelism parameter [default: 4]')
 def encode(input_file, output, error_correction, module_size,
-           page_width, page_height, margin, spacing, title, no_header):
+           page_width, page_height, margin, spacing, title, no_header,
+           encrypt, argon2_time, argon2_memory, argon2_parallelism):
     """Encode a file into a QR code backup PDF.
 
     Example:
         qr_code_backup encode mydata.txt -o backup.pdf
+        qr_code_backup encode secret.txt -o backup.pdf --encrypt
     """
     try:
         # Hardcode compression to bzip2
         compression = 'bzip2'
+
+        # Handle encryption password
+        password = None
+        if encrypt:
+            password = click.prompt('Enter encryption password', hide_input=True, confirmation_prompt=True)
+            click.echo(f"Encryption: AES-256-GCM with Argon2id (time={argon2_time}, memory={argon2_memory}KiB, parallelism={argon2_parallelism})")
 
         # Validate module size and warn if too small
         if module_size < 0.8:
@@ -841,6 +1160,8 @@ def encode(input_file, output, error_correction, module_size,
 
         # Display configuration
         click.echo(f"\nEncoding: {input_file}")
+        if encrypt:
+            click.echo(f"Encryption: Enabled (AES-256-GCM)")
         click.echo(f"Page: {page_width}mm × {page_height}mm (margin: {margin}mm, spacing: {spacing}mm)")
         click.echo(f"QR Configuration: Version {optimal_version}, Error Correction {error_correction}")
         click.echo(f"QR Module Size: {module_size}mm → Physical QR Size: {qr_physical_size:.1f}mm")
@@ -851,10 +1172,16 @@ def encode(input_file, output, error_correction, module_size,
 
         # Create chunks (returns list of binary data)
         click.echo(f"Chunk size: {chunk_size:,} bytes per QR code")
-        chunks = create_chunks(input_file, chunk_size, compression)
+        if encrypt:
+            click.echo("Compressing and encrypting...")
+        chunks = create_chunks(input_file, chunk_size, compression,
+                              encrypt=encrypt, password=password,
+                              argon2_time=argon2_time,
+                              argon2_memory=argon2_memory,
+                              argon2_parallelism=argon2_parallelism)
 
-        # Extract MD5 from first chunk for display (first 16 bytes)
-        file_md5_binary = chunks[0][:16]
+        # Extract MD5 from first chunk for display (bytes 1-17, after encryption flag)
+        file_md5_binary = chunks[0][1:17]
         file_md5_hex = file_md5_binary.hex()
 
         # Calculate number of pages needed
@@ -895,11 +1222,14 @@ def encode(input_file, output, error_correction, module_size,
               help='Attempt recovery from missing/damaged QR codes')
 @click.option('--force', is_flag=True,
               help='Overwrite existing output file')
-def decode(input_pdf, output, verify, recovery_mode, force):
+@click.option('--password', type=str, default=None,
+              help='Decryption password (will prompt if encrypted and not provided)')
+def decode(input_pdf, output, verify, recovery_mode, force, password):
     """Decode a QR code backup PDF into original file.
 
     Example:
         qr_code_backup decode backup.pdf -o recovered.txt
+        qr_code_backup decode encrypted_backup.pdf -o recovered.txt --password mypass
     """
     try:
         click.echo(f"\nDecoding: {input_pdf}")
@@ -973,11 +1303,19 @@ def decode(input_pdf, output, verify, recovery_mode, force):
             if scan_order != page_numbers_sorted:
                 click.echo("Pages were scanned out of order - reordering automatically...")
 
+            # Check for encryption and prompt for password if needed
+            first_chunk = next((p for p in parsed_for_analysis if p['page_number'] == 1), None)
+            if first_chunk and first_chunk.get('encrypted'):
+                click.echo("\nDocument is encrypted (AES-256-GCM)")
+                if password is None:
+                    password = click.prompt('Enter decryption password', hide_input=True)
+
         # Reassemble file
         click.echo("Reassembling data...")
         try:
             file_data, report = reassemble_chunks(all_chunk_binaries, verify=verify,
-                                                 recovery_mode=recovery_mode)
+                                                 recovery_mode=recovery_mode,
+                                                 password=password)
         except ValueError as e:
             click.echo(f"\nError: {e}", err=True)
             if not recovery_mode:
@@ -997,6 +1335,9 @@ def decode(input_pdf, output, verify, recovery_mode, force):
         # Display report
         click.echo(f"\nRecovered: {output} ({report['recovered_size']:,} bytes)")
         click.echo(f"Original file size: {report['file_size']:,} bytes")
+
+        if report.get('decryption') == 'success':
+            click.echo("Decryption: SUCCESS")
 
         if verify:
             if report.get('md5_verified'):
@@ -1058,6 +1399,9 @@ def info(pdf_file):
         click.echo("QR CODE BACKUP METADATA")
         click.echo(f"{'='*60}")
         click.echo(f"Format Version:      Binary v1.0")
+        click.echo(f"Encryption:          {'Yes (AES-256-GCM)' if metadata.get('encrypted') else 'No'}")
+        if metadata.get('encrypted') and metadata.get('time_cost'):
+            click.echo(f"Argon2 Parameters:   time={metadata['time_cost']}, memory={metadata['memory_cost']}KiB, parallelism={metadata['parallelism']}")
         click.echo(f"Original File Size:  {metadata.get('file_size', 'N/A'):,} bytes" if metadata.get('file_size') else "Original File Size:  N/A (not page 1)")
         click.echo(f"MD5 Hash:            {metadata['md5_hash'].hex()}")
         click.echo(f"Page Number:         {metadata['page_number']}")
