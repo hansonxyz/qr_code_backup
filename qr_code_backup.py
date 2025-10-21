@@ -1446,24 +1446,28 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                 # Get encryption flag from any available chunk (all pages have same flag)
                 encryption_flag = parsed_chunks[0]['encrypted'] if parsed_chunks else False
 
-                # Compute chunk data capacities from chunk_size and metadata overhead
-                # Get chunk_size from any chunk binary (they're all the same size)
-                reference_chunk_binary = chunk_binaries[0]
-                chunk_size = len(reference_chunk_binary)
+                # Compute chunk data capacities from padded parity size
+                # All chunks (data + parity) are padded to same size for Reed-Solomon
+                # Parity chunk data size tells us the PADDED size
+                padded_chunk_size = len(parity_chunks[0]['data'])
 
-                # Calculate data capacities based on metadata overhead
-                # Page 1 has extra metadata (file_size + possibly encryption metadata)
+                # Work backwards from compressed_size to determine actual chunk sizes
+                # Page 1 has LESS capacity than other pages due to extra metadata
+                # Page 1: 4 fewer bytes (unencrypted) or 76 fewer bytes (encrypted)
+                compressed_size_val = parity_chunks[0]['compressed_size']
+
+                # Calculate how data was distributed during encoding
+                # The encoding uses: page1_capacity, then other_page_capacity for remaining chunks
                 if encryption_flag:
-                    page1_data_capacity = chunk_size - 96  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1) + FileSize(4) + EncMeta(72)
-                    other_data_capacity = chunk_size - 20  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1)
+                    page1_capacity = padded_chunk_size - 76  # Page 1 has 76 extra bytes of metadata
+                    other_capacity = padded_chunk_size
                 else:
-                    page1_data_capacity = chunk_size - 24  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1) + FileSize(4)
-                    other_data_capacity = chunk_size - 20  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1)
+                    page1_capacity = padded_chunk_size - 4  # Page 1 has 4 extra bytes of metadata
+                    other_capacity = padded_chunk_size
 
                 # Reconstruct data_chunks with recovered pages
                 # Calculate actual size for each chunk based on compressed_size
                 data_chunks = []
-                compressed_size_val = parity_chunks[0]['compressed_size']
                 bytes_so_far = 0
 
                 for page_num, data in enumerate(recovered_data, 1):
@@ -1478,9 +1482,9 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                         # Recovered chunk - need to strip padding
                         # Determine capacity for this chunk
                         if page_num == 1:
-                            capacity = page1_data_capacity
+                            capacity = page1_capacity
                         else:
-                            capacity = other_data_capacity
+                            capacity = other_capacity
 
                         # Actual size is min of capacity and remaining bytes
                         remaining = compressed_size_val - bytes_so_far

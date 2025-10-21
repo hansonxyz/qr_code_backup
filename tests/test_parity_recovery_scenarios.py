@@ -209,6 +209,69 @@ class TestParityRecoveryScenarios:
                 assert report['parity_recovery'] == 4  # Recovered entire first PDF page
                 print(f"✓ Recovered from entire first PDF page missing (including page 1 metadata)")
 
+    def test_recover_from_only_parity_pages(self):
+        """Test recovery when ALL data pages are missing - decode from ONLY parity pages.
+
+        This demonstrates the full power of Reed-Solomon erasure codes:
+        With N parity chunks, you can recover from ALL N data chunks being missing.
+
+        Uses RFC 1149 example:
+        - 4 data chunks (page 1)
+        - 4 parity chunks (page 2)
+        - Remove ALL data chunks
+        - Recover entire document from only parity
+        """
+        import tempfile
+        import filecmp
+        import subprocess
+        from tests.pdf_helpers import extract_pdf_pages, get_pdf_page_count
+
+        # Use the RFC 1149 example file
+        input_file = 'examples/rfc1149.txt'
+
+        if not os.path.exists(input_file):
+            pytest.skip("RFC 1149 example file not found")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'output.txt')
+            pdf_file = os.path.join(tmpdir, 'rfc1149.pdf')
+            parity_only_pdf = os.path.join(tmpdir, 'parity_only.pdf')
+
+            # Encode with default settings using CLI (5% parity)
+            result = subprocess.run([
+                'python3', 'qr_code_backup.py', 'encode',
+                input_file,
+                '-o', pdf_file,
+                '--parity-percent', '5.0'
+            ], capture_output=True, text=True)
+
+            assert result.returncode == 0, f"Encode failed: {result.stderr}"
+
+            # Verify PDF structure: should be 2 pages (4 data QRs + 4 parity QRs)
+            page_count = get_pdf_page_count(pdf_file)
+            assert page_count == 2, f"Expected 2 PDF pages, got {page_count}"
+
+            # Extract ONLY page 2 (the parity page with 4 parity QR codes)
+            extract_pdf_pages(pdf_file, parity_only_pdf, [2])
+
+            # Decode from ONLY parity pages (all 4 data chunks missing!)
+            result = subprocess.run([
+                'python3', 'qr_code_backup.py', 'decode',
+                parity_only_pdf,
+                '-o', output_file
+            ], capture_output=True, text=True)
+
+            assert result.returncode == 0, f"Decode failed: {result.stderr}"
+
+            # Verify complete recovery
+            assert filecmp.cmp(input_file, output_file), "Decoded file doesn't match original"
+            assert 'Successfully recovered 4 page(s)!' in result.stdout, "Should report 4 pages recovered"
+
+            print(f"✓ Successfully recovered ENTIRE document from ONLY parity pages!")
+            print(f"  - All 4 data chunks were missing")
+            print(f"  - Recovered from 4 parity chunks alone")
+            print(f"  - Demonstrates full power of Reed-Solomon erasure codes")
+
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
