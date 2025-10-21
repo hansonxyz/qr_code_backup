@@ -168,6 +168,7 @@ class TestMetadataParsing:
         chunk.append(0x00)  # Not encrypted
         chunk.extend(md5)
         chunk.extend((1).to_bytes(2, 'big'))  # Page 1
+        chunk.append(0x00)  # Parity flag = 0x00 (data page)
         chunk.extend((1000).to_bytes(4, 'big'))  # File size
         chunk.extend(b"compressed_data")
 
@@ -177,6 +178,7 @@ class TestMetadataParsing:
         assert parsed['encrypted'] == False
         assert parsed['md5_hash'] == md5
         assert parsed['page_number'] == 1
+        assert parsed['is_parity'] == False
         assert parsed['file_size'] == 1000
         assert parsed['data'] == b"compressed_data"
 
@@ -192,6 +194,7 @@ class TestMetadataParsing:
         chunk.append(0x01)  # Encrypted
         chunk.extend(md5)
         chunk.extend((1).to_bytes(2, 'big'))  # Page 1
+        chunk.append(0x00)  # Parity flag = 0x00 (data page)
         chunk.extend((5000).to_bytes(4, 'big'))  # File size
         chunk.extend(salt)
         chunk.extend((3).to_bytes(4, 'big'))  # time_cost
@@ -206,6 +209,7 @@ class TestMetadataParsing:
         assert parsed is not None
         assert parsed['encrypted'] == True
         assert parsed['page_number'] == 1
+        assert parsed['is_parity'] == False
         assert parsed['file_size'] == 5000
         assert parsed['salt'] == salt
         assert parsed['time_cost'] == 3
@@ -224,6 +228,7 @@ class TestMetadataParsing:
         chunk.append(0x01)  # Encrypted
         chunk.extend(md5)
         chunk.extend((2).to_bytes(2, 'big'))  # Page 2
+        chunk.append(0x00)  # Parity flag = 0x00 (data page)
         chunk.extend(b"encrypted_chunk_data")
 
         parsed = qcb.parse_binary_chunk(bytes(chunk))
@@ -231,6 +236,7 @@ class TestMetadataParsing:
         assert parsed is not None
         assert parsed['encrypted'] == True
         assert parsed['page_number'] == 2
+        assert parsed['is_parity'] == False
         assert 'file_size' in parsed
         assert parsed['file_size'] is None  # Not page 1
         assert 'salt' not in parsed

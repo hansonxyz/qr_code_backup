@@ -6,7 +6,8 @@ A Python command-line tool for archiving digital data as QR codes printed on pap
 
 - **Encode any file** into multi-page PDF documents containing QR codes
 - **Decode scanned PDFs** back into the original file
-- **🆕 Password-based encryption** - AES-256-GCM with Argon2id key derivation
+- **🆕 Parity pages for recovery** - Reed-Solomon erasure codes recover from missing pages
+- **Password-based encryption** - AES-256-GCM with Argon2id key derivation
 - **Built-in error correction** (7% to 30%) to handle paper degradation
 - **Automatic compression** (bzip2) to maximize storage efficiency
 - **Checksum verification** ensures data integrity with MD5 validation
@@ -131,6 +132,8 @@ python qr_code_backup.py encode <input_file> [OPTIONS]
 | `--argon2-time <n>` | Argon2 time cost parameter | 3 |
 | `--argon2-memory <kb>` | Argon2 memory cost in KiB | 65536 (64MB) |
 | `--argon2-parallelism <n>` | Argon2 parallelism parameter | 4 |
+| `--parity` | Enable parity pages (auto-calculates ~5% overhead) | disabled |
+| `--parity-pages <n>` | Number of parity pages (overrides --parity) | none |
 | `--error-correction <level>` | Error correction: L(7%), M(15%), Q(25%), H(30%) | M (15%) |
 | `--module-size <mm>` | QR module size in millimeters | 0.9 |
 | `--page-width <mm>` | Page width in millimeters | 215.9 (Letter) |
@@ -157,6 +160,15 @@ python qr_code_backup.py encode keys.txt --encrypt --argon2-time 5 --argon2-memo
 
 # Custom title
 python qr_code_backup.py encode data.txt --title "Backup 2024-01-15"
+
+# Enable parity pages for recovery from missing/damaged pages
+python qr_code_backup.py encode important.txt --parity
+
+# Custom parity count (can recover up to 3 missing pages)
+python qr_code_backup.py encode critical.txt --parity-pages 3
+
+# Combine encryption and parity for maximum protection
+python qr_code_backup.py encode secrets.txt --encrypt --parity --error-correction H
 ```
 
 ### Decode Command
@@ -250,23 +262,33 @@ PDF Pages:           3
 
 Each QR code contains binary data with the following structure:
 
-**Unencrypted chunks:**
+**Unencrypted data page (page 1):**
 ```
-[0x00] [MD5:16] [Page#:2] [FileSize:4 (page 1 only)] [Data:variable]
+[0x00] [MD5:16] [Page#:2] [Parity:1=0x00] [FileSize:4] [Data:variable]
 ```
 
-**Encrypted chunks (page 1):**
+**Unencrypted data page (page 2+):**
 ```
-[0x01] [MD5:16] [Page#:2] [FileSize:4] [Salt:16] [Time:4] [Memory:4]
+[0x00] [MD5:16] [Page#:2] [Parity:1=0x00] [Data:variable]
+```
+
+**Encrypted data page (page 1):**
+```
+[0x01] [MD5:16] [Page#:2] [Parity:1=0x00] [FileSize:4] [Salt:16] [Time:4] [Memory:4]
 [Parallelism:4] [VerifyHash:32] [Nonce:12] [EncryptedData:variable]
 ```
 
-**Encrypted chunks (page 2+):**
+**Encrypted data page (page 2+):**
 ```
-[0x01] [MD5:16] [Page#:2] [EncryptedData:variable]
+[0x01] [MD5:16] [Page#:2] [Parity:1=0x00] [EncryptedData:variable]
 ```
 
-All multi-byte integers are big-endian. MD5 is calculated on the (possibly encrypted) compressed data.
+**Parity page:**
+```
+[Enc:1] [MD5:16] [Page#:2] [Parity:1=0x01] [ParityIdx:2] [TotalParity:2] [TotalData:2] [ParityData:variable]
+```
+
+All multi-byte integers are big-endian. MD5 is calculated on the (possibly encrypted) compressed data. Parity pages use the same MD5 as data pages for document validation.
 
 ## New Features (Phase 2)
 
@@ -381,6 +403,88 @@ python qr_code_backup.py decode mixed_pages.pdf -o output.txt
 - Clear error shows exactly which PDF page is wrong
 - Shows both MD5 hashes for comparison
 - Prevents wasting time scanning wrong pages
+
+### Parity Pages for Recovery
+
+Recover from missing or damaged pages using Reed-Solomon erasure codes. With parity pages enabled, you can reconstruct missing data pages automatically - perfect for long-term archival where degradation is expected.
+
+**How It Works:**
+- **Reed-Solomon erasure codes** compute parity data across all data pages
+- **Vertical parity** - computed byte-by-byte across chunks at each position
+- **N parity pages = recover N missing pages** - e.g., 2 parity pages can recover any 2 missing data pages
+- **Automatic recovery** - missing pages are detected and reconstructed during decode
+- **Default ~5% overhead** - 1 parity page per 20 data pages balances protection vs space
+
+**Example:**
+```bash
+# Encode with automatic parity calculation (~5% overhead)
+python qr_code_backup.py encode document.pdf -o backup.pdf --parity
+
+# Output:
+# Generating 1 parity page(s)...
+# Generated 20 data pages + 1 parity page = 21 total
+
+# View parity info
+python qr_code_backup.py info backup.pdf
+
+# Output:
+# Parity Pages:        1 (can recover 1 missing page)
+# Data Pages:          20
+# Parity Overhead:     5.0%
+
+# Decode with a missing page (parity automatically recovers it)
+python qr_code_backup.py decode backup_damaged.pdf -o recovered.pdf
+
+# Output:
+# Found 1 parity page(s)
+# Missing 1 data page(s): [7]
+# Attempting parity recovery...
+# Successfully recovered 1 page(s)!
+# Verification: PASS
+```
+
+**Custom Parity Count:**
+```bash
+# Can recover up to 3 missing pages (higher overhead but more protection)
+python qr_code_backup.py encode critical.txt --parity-pages 3 -o backup.pdf
+
+# Output:
+# Generating 3 parity page(s)...
+# Generated 15 data pages + 3 parity pages = 18 total
+# Parity Overhead: 20.0%
+```
+
+**Combined with Encryption:**
+```bash
+# Maximum protection: encryption + parity + high error correction
+python qr_code_backup.py encode secrets.txt --encrypt --parity --error-correction H -o backup.pdf
+
+# Benefits:
+# - Encryption protects confidentiality
+# - Parity recovers missing pages
+# - QR error correction (30%) handles physical damage within each QR code
+# - Triple protection for critical data!
+```
+
+**Benefits:**
+- **Automatic recovery** - no manual intervention needed
+- **Any pages can be missing** - order doesn't matter, any combination of N pages
+- **Works with encryption** - parity computed on ciphertext (doesn't leak plaintext)
+- **Tunable overhead** - balance protection vs additional pages
+- **Labeled in PDF** - parity pages clearly marked "PARITY 1/3" etc.
+
+**When to Use Parity:**
+- **Long-term archival** - expect some degradation over decades
+- **Unreliable scanning** - some pages may be damaged or unreadable
+- **Critical data** - can't afford to lose even one page
+- **Combined with printing** - some copies may have missing pages
+
+**Technical Details:**
+- Uses `reedsolo` library for Reed-Solomon error correction
+- Chunks padded to uniform size before parity generation
+- Parity pages contain metadata: parity index, total parity, total data pages
+- Recovery happens during reassemble, before decompression/decryption
+- Parity works at chunk level (complements QR-level error correction)
 
 ## Data Capacity
 
@@ -665,12 +769,13 @@ For issues, questions, or suggestions:
 ## Version History
 
 ### 2.0.0 (Current - Phase 2)
+- Parity pages for recovery (Reed-Solomon erasure codes, recover from N missing pages)
 - Password-based encryption (AES-256-GCM with Argon2id)
 - Order-independent decoding (scan pages in any order)
 - Mixed document detection (prevents accidental page mixing)
 - Binary chunk format (replaces JSON for efficiency)
 - MD5-based document validation
-- Comprehensive encryption test suite
+- Comprehensive test suite (45 tests covering encryption, parity, and integration)
 
 ### 1.0.0 (Phase 1)
 - Initial release

@@ -22,6 +22,9 @@ click>=8.1.0
 cryptography>=41.0.0
 argon2-cffi>=23.1.0
 
+# Parity/error correction
+reedsolo>=1.7.0
+
 # Testing dependencies
 pytest>=7.4.0
 pytest-cov>=4.1.0
