@@ -2,6 +2,8 @@
 
 QR Code Backup is a command-line tool for archiving digital data as QR codes printed on paper. It encodes files into multi-page PDFs containing QR codes with error correction, and can decode scanned PDFs back into the original files.
 
+[See example PDF](examples/3k_random_example.pdf)
+
 ## Features
 
 - **Encode any file** into multi-page PDF documents containing QR codes
@@ -32,7 +34,7 @@ All processing is done locally with no network connectivity required.
 **Ubuntu/Debian:**
 ```bash
 sudo apt-get update
-sudo apt-get install libzbar0 poppler-utils
+sudo apt-get install libzbar0 poppler-utils libgl1-mesa-glx libglib2.0-0
 ```
 
 **macOS:**
