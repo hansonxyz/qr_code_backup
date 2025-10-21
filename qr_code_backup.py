@@ -57,7 +57,7 @@ import numpy as np
 from pypdf import PdfReader, PdfWriter
 
 # Version and format constants
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 FORMAT_VERSION = "1.0"
 
 # QR Code error correction mapping

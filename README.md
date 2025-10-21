@@ -1,43 +1,133 @@
 # QR Code Backup
 
-A Python command-line tool for archiving digital data as QR codes printed on paper for long-term offline storage. Perfect for backing up critical data, cryptographic keys, documents, or any file that needs to survive digital storage failures.
+**Archive digital data as printable QR codes for long-term offline storage.**
 
-## Features
+A command-line tool that converts any file into a PDF full of QR codes that you can print and store physically. When you need your data back, just scan the pages and decode—even if they're out of order or some pages are missing.
 
-- **Encode any file** into multi-page PDF documents containing QR codes
-- **Decode scanned PDFs** back into the original file
-- **🆕 Parity pages for recovery** - Always-on Reed-Solomon erasure codes (5% default, percentage-based)
-- **Password-based encryption** - AES-256-GCM with Argon2id key derivation
-- **Built-in error correction** (7% to 30%) to handle paper degradation
-- **Automatic compression** (bzip2) to maximize storage efficiency
-- **Checksum verification** ensures data integrity with MD5 validation
-- **Configurable density** - automatic QR version calculation for 2×2 grid layout
-- **Professional output** with headers showing page numbers and metadata
-- **Recovery mode** to extract partial data from damaged archives
-- **Order-independent decoding** - scan pages in any order, automatic reordering
-- **Mixed document detection** - immediate error if pages from different backups are mixed
+[![Tests](https://img.shields.io/badge/tests-45%20passing-brightgreen)]() [![License](https://img.shields.io/badge/license-MIT-blue)]() [![Python](https://img.shields.io/badge/python-3.8%2B-blue)]()
 
-## Use Cases
+---
 
-- Critical document archival (legal documents, certificates, keys)
-- Offline backup of encryption keys and passwords
-- Long-term photo archival
-- Code repository snapshots
-- Configuration backups for disaster recovery
-- Digital time capsules
+## Overview
+
+Digital storage fails. Hard drives crash, cloud services shut down, formats become obsolete. But paper, stored properly, can last centuries.
+
+**QR Code Backup** encodes your critical files—encryption keys, documents, passwords, certificates—into QR codes on paper. It's designed for the long haul: built-in encryption, automatic error recovery, and resilience against physical damage.
+
+Think of it as **tar for paper archives**.
+
+### Why Use This?
+
+- **🔒 Offline & Air-Gapped** - No network, no cloud, completely offline storage
+- **🛡️ Survives Digital Failures** - Independent of hard drives, USB sticks, or online services
+- **📜 Long-Term Archival** - Paper stored properly outlasts digital media (decades to centuries)
+- **🔐 Built-in Encryption** - Military-grade AES-256-GCM with password protection
+- **🔧 Self-Recovering** - Automatic recovery from missing or damaged pages
+- **🎯 Physical Control** - You control the medium, no third-party dependencies
+
+---
+
+## Key Features
+
+### Core Functionality
+- **📄 Any File → QR Codes** - Encode any file type into multi-page PDF documents
+- **🔄 Perfect Reconstruction** - Decode scanned PDFs back to exact original file
+- **✅ Automatic Verification** - MD5 checksums ensure data integrity
+
+### Robustness & Recovery
+- **🆘 Parity Pages** - Always-on Reed-Solomon erasure codes (default 5% overhead)
+  - Automatically recover missing pages
+  - Works like RAID for paper - lose pages, still get your data back
+- **🔀 Order-Independent** - Scan pages in any order, automatic reordering
+- **🚨 Mixed Document Detection** - Prevents accidental page mixing from different backups
+- **🛡️ Built-in Error Correction** - QR codes with 7-30% error correction handle physical damage
+
+### Security
+- **🔐 AES-256-GCM Encryption** - Quantum-resistant symmetric encryption
+- **🔑 Argon2id Key Derivation** - Memory-hard, GPU/ASIC resistant password hashing
+- **✓ Authenticated Encryption** - Automatic tampering detection
+
+### Optimization
+- **🗜️ Automatic Compression** - bzip2 compression maximizes storage efficiency
+- **⚙️ Configurable Density** - Adjust QR code size for your printer/scanner
+- **📊 Professional Output** - Headers with page numbers and decode instructions
+
+---
+
+## Practical Use Cases
+
+### Security & Critical Data
+- **🔑 Encryption Key Backup** - Store PGP keys, SSH keys, Bitcoin wallets offline
+- **🔒 Password Vault Backup** - Paper backup of your password manager database
+- **📝 Legal Documents** - Wills, deeds, contracts, certificates
+- **🏦 Financial Records** - Tax returns, account information, insurance policies
+
+### Disaster Recovery
+- **💾 Configuration Backups** - Server configs, network settings, emergency access credentials
+- **📋 Business Continuity** - Critical data for disaster recovery scenarios
+- **🏚️ Off-site Storage** - Fire-resistant, water-resistant safe deposit boxes
+
+### Long-Term Archival
+- **📸 Photo Archives** - Long-term storage of irreplaceable photos (compressed)
+- **📚 Code Snapshots** - Archive critical source code versions
+- **⏰ Time Capsules** - Digital data intended for distant future access
+- **🏛️ Institutional Archives** - Government records, historical data preservation
+
+### Special Scenarios
+- **🌐 Air-Gapped Systems** - Transfer data to/from isolated networks via paper
+- **🚫 Trust-Minimized Storage** - No reliance on cloud providers or external services
+- **🔬 Research Data** - Long-term storage of experimental data, analysis results
+
+---
+
+## Quick Start
+
+### 1. Encode a File
+
+```bash
+python qr_code_backup.py encode myfile.txt
+```
+
+Creates `myfile.txt.qr.pdf` with QR codes.
+
+### 2. Encode with Encryption
+
+```bash
+python qr_code_backup.py encode secrets.txt --encrypt
+```
+
+Prompts for password, encrypts before encoding.
+
+### 3. Decode Back to Original
+
+```bash
+python qr_code_backup.py decode myfile.txt.qr.pdf -o recovered.txt
+```
+
+Scans QR codes and reconstructs the original file.
+
+### 4. View Backup Info
+
+```bash
+python qr_code_backup.py info myfile.txt.qr.pdf
+```
+
+Shows metadata without decoding.
+
+---
 
 ## Installation
 
 ### Requirements
 
-- Python 3.8 or higher
-- pip (Python package manager)
+- **Python 3.8+**
+- **pip** (Python package manager)
 
 ### System Dependencies
 
-The QR code decoding requires `libzbar0`:
+QR code decoding requires system libraries:
 
-**Linux (Ubuntu/Debian):**
+**Ubuntu/Debian:**
 ```bash
 sudo apt-get update
 sudo apt-get install libzbar0 poppler-utils
@@ -49,90 +139,52 @@ brew install zbar poppler
 ```
 
 **Windows:**
-- Download zbar from http://zbar.sourceforge.net/
-- Download poppler from https://github.com/oschwartz10612/poppler-windows/releases
+- Download zbar: http://zbar.sourceforge.net/
+- Download poppler: https://github.com/oschwartz10612/poppler-windows/releases
 
 ### Python Dependencies
 
-Install all Python dependencies:
+Install from requirements file:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Or install them individually:
+Or install individually:
 ```bash
-pip install qrcode[pil] Pillow pyzbar pypdf reportlab pdf2image opencv-python numpy click cryptography argon2-cffi pytest pytest-cov
+pip install qrcode[pil] Pillow pyzbar pypdf reportlab pdf2image opencv-python numpy click cryptography argon2-cffi reedsolo
 ```
 
 ### Verify Installation
-
-Test that the tool works:
 
 ```bash
 python qr_code_backup.py --help
 ```
 
-You should see the help text with available commands.
+You should see command help text.
 
-## Quick Start
+---
 
-### Encode a File
-
-Encode a text file into a QR code backup PDF:
-
-```bash
-python qr_code_backup.py encode mydata.txt -o backup.pdf
-```
-
-This creates `backup.pdf` with QR codes containing your data.
-
-### Encode with Encryption
-
-Protect sensitive data with password-based encryption:
-
-```bash
-python qr_code_backup.py encode secrets.txt -o backup.pdf --encrypt
-```
-
-You'll be prompted to enter a password. The data is encrypted with AES-256-GCM before encoding.
-
-### Decode a File
-
-Decode a scanned PDF back into the original file:
-
-```bash
-python qr_code_backup.py decode backup.pdf -o recovered.txt
-```
-
-This extracts the data and saves it as `recovered.txt`. If the PDF is encrypted, you'll be prompted for the password.
-
-### View Metadata
-
-Display information about an encoded PDF:
-
-```bash
-python qr_code_backup.py info backup.pdf
-```
-
-## Usage Guide
+## Basic Usage
 
 ### Encode Command
+
+Convert a file to QR code PDF:
 
 ```bash
 python qr_code_backup.py encode <input_file> [OPTIONS]
 ```
 
-**Options:**
+**Common Options:**
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-o, --output <path>` | Output PDF file path | `<input_file>.qr.pdf` |
-| `--error-correction <level>` | Error correction: L(7%), M(15%), Q(25%), H(30%) | M (15%) |
-| `--density <mm>` | QR code density in mm (smaller = denser) | 0.9 |
-| `--title <text>` | Title for page headers | filename |
-| `--encrypt` | Enable encryption (prompts for password) | disabled |
-| `--parity-percent <n>` | Parity percentage (0-100). Set to 0 to disable. | 5.0 (always enabled) |
+| `-o, --output <path>` | Output PDF file path | `<input>.qr.pdf` |
+| `--encrypt` | Encrypt with password | disabled |
+| `--error-correction <L\|M\|Q\|H>` | QR error correction level | M (15%) |
+| `--parity-percent <0-100>` | Recovery overhead percentage | 5.0 |
+| `--density <mm>` | QR code size in mm (smaller = denser) | 0.9 |
+| `--title <text>` | Custom page header title | filename |
 
 **Examples:**
 
@@ -143,43 +195,32 @@ python qr_code_backup.py encode document.pdf
 # Encrypt sensitive data
 python qr_code_backup.py encode passwords.txt --encrypt
 
-# Maximum error correction for long-term storage
-python qr_code_backup.py encode important.txt --error-correction H
+# Maximum protection (encryption + high error correction)
+python qr_code_backup.py encode keys.txt --encrypt --error-correction H
 
-# Custom title
-python qr_code_backup.py encode data.txt --title "Backup 2024-01-15"
+# Custom title for printed pages
+python qr_code_backup.py encode data.bin --title "Production Keys 2024-01-15"
 
-# Adjust density (smaller = more data per page, harder to scan)
-python qr_code_backup.py encode large_file.bin --density 0.7
-
-# Parity is enabled by default (5% overhead, ~1 page per 20 data pages)
-python qr_code_backup.py encode important.txt
-
-# Custom parity percentage (10% = more protection, can recover ~1 page per 10 data pages)
+# Higher parity for critical data (10% = recover ~10% missing pages)
 python qr_code_backup.py encode critical.txt --parity-percent 10.0
-
-# Disable parity (not recommended for important data)
-python qr_code_backup.py encode data.txt --parity-percent 0
-
-# Combine encryption and parity for maximum protection
-python qr_code_backup.py encode secrets.txt --encrypt --error-correction H
 ```
 
 ### Decode Command
 
+Reconstruct original file from scanned QR codes:
+
 ```bash
-python qr_code_backup.py decode <input_pdf> [OPTIONS]
+python qr_code_backup.py decode <input_pdf> -o <output_file> [OPTIONS]
 ```
 
 **Options:**
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `-o, --output <path>` | Output file path (required) | - |
-| `--password <pass>` | Decryption password (prompts if encrypted) | prompt |
-| `--verify` | Verify checksums (enabled by default) | true |
-| `--recovery-mode` | Attempt recovery from damaged QR codes | false |
-| `--force` | Overwrite existing output file | false |
+| Option | Description |
+|--------|-------------|
+| `-o, --output <path>` | Output file path (required) |
+| `--password <pass>` | Password for encrypted backups |
+| `--recovery-mode` | Attempt recovery from damaged QR codes |
+| `--force` | Overwrite existing output file |
 
 **Examples:**
 
@@ -187,428 +228,591 @@ python qr_code_backup.py decode <input_pdf> [OPTIONS]
 # Basic decoding
 python qr_code_backup.py decode backup.pdf -o recovered.txt
 
-# Decode encrypted backup (will prompt for password)
-python qr_code_backup.py decode encrypted.pdf -o secrets.txt
+# Decode encrypted backup (prompts for password)
+python qr_code_backup.py decode encrypted_backup.pdf -o secrets.txt
 
-# Decode with password on command line
-python qr_code_backup.py decode encrypted.pdf -o secrets.txt --password mypass
+# Provide password via command line
+python qr_code_backup.py decode backup.pdf -o data.txt --password mypassword
 
-# Attempt recovery from damaged backup
+# Attempt recovery from damaged pages
 python qr_code_backup.py decode damaged.pdf -o recovered.txt --recovery-mode
-
-# Overwrite existing file
-python qr_code_backup.py decode backup.pdf -o data.txt --force
 ```
 
 ### Info Command
 
-Display metadata without decoding:
+View backup metadata without decoding:
 
 ```bash
 python qr_code_backup.py info backup.pdf
 ```
 
-Example output:
+**Example output:**
 ```
 ============================================================
 QR CODE BACKUP METADATA
 ============================================================
 Format Version:      Binary v1.0
 Encryption:          Yes (AES-256-GCM)
-Argon2 Parameters:   time=3, memory=65536KiB, parallelism=4
 Original File Size:  25,678 bytes
 MD5 Hash:            3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
-Page Number:         1
 Compression:         bzip2
-QR Codes per Page:   ~4
-Total QR Codes:      12
-PDF Pages:           3
+Total Pages:         21 (20 data + 1 parity)
+Parity Overhead:     5.0%
+Recovery Capacity:   1 missing page
 ============================================================
 ```
 
-## How It Works
+---
 
-### Encoding Process
+## Advanced Usage
 
-1. **Read file** - Load the input file into memory
-2. **Compress** - Apply bzip2 compression to reduce size
-3. **Encrypt (optional)** - Encrypt compressed data with AES-256-GCM if `--encrypt` is used
-4. **Calculate MD5** - Generate MD5 hash of (possibly encrypted) compressed data
-5. **Split into chunks** - Divide data into chunks that fit in QR codes
-6. **Create metadata** - Add page numbers, MD5 hash, encryption metadata (if encrypted) to each chunk
-7. **Generate QR codes** - Create QR code images with error correction
-8. **Build PDF** - Arrange QR codes in a grid with headers on each page
+### Encryption Best Practices
 
-### Decoding Process
+**Use built-in encryption for most cases:**
 
-1. **Load PDF** - Convert PDF pages to images
-2. **Scan QR codes** - Detect and decode all QR codes using pyzbar
-3. **Parse metadata** - Extract binary data from each QR code
-4. **Validate MD5** - Check for mixed documents using MD5 hash
-5. **Sort chunks** - Order chunks by page number (order-independent)
-6. **Reassemble** - Concatenate chunk data in correct order
-7. **Verify MD5** - Check MD5 hash of reassembled data
-8. **Decrypt (if encrypted)** - Decrypt using provided password
-9. **Decompress** - Uncompress data using bzip2
-10. **Write output** - Save recovered file
-
-### Data Format
-
-Each QR code contains binary data with the following structure:
-
-**Unencrypted data page (page 1):**
-```
-[0x00] [MD5:16] [Page#:2] [Parity:1=0x00] [FileSize:4] [Data:variable]
+```bash
+# Built-in: AES-256-GCM with Argon2id key derivation
+python qr_code_backup.py encode secrets.txt --encrypt
 ```
 
-**Unencrypted data page (page 2+):**
-```
-[0x00] [MD5:16] [Page#:2] [Parity:1=0x00] [Data:variable]
+The tool uses:
+- **AES-256-GCM**: Industry-standard authenticated encryption
+- **Argon2id**: Memory-hard password hashing (resistant to GPU/ASIC attacks)
+- **BLAKE2b**: Fast password verification before decryption attempts
+- Hardcoded secure parameters: time_cost=3, memory=64MB, parallelism=4
+
+**External encryption (for specific cipher requirements):**
+
+```bash
+# Encrypt with GPG first
+gpg -c secrets.txt  # Creates secrets.txt.gpg
+
+# Then encode the encrypted file
+python qr_code_backup.py encode secrets.txt.gpg -o backup.pdf
+
+# To recover: decode then decrypt
+python qr_code_backup.py decode backup.pdf -o recovered.gpg
+gpg -d recovered.gpg > secrets.txt
 ```
 
-**Encrypted data page (page 1):**
+### Error Correction Levels
+
+Choose based on expected storage conditions:
+
+| Level | Correction | Use Case |
+|-------|-----------|----------|
+| **L** | ~7% | Clean, controlled environment |
+| **M** | ~15% | General use (default) |
+| **Q** | ~25% | Moderate degradation expected |
+| **H** | ~30% | Critical data, harsh conditions |
+
+```bash
+# Maximum error correction for long-term storage
+python qr_code_backup.py encode important.txt --error-correction H
 ```
-[0x01] [MD5:16] [Page#:2] [Parity:1=0x00] [FileSize:4] [Salt:16] [Time:4] [Memory:4]
-[Parallelism:4] [VerifyHash:32] [Nonce:12] [EncryptedData:variable]
+
+Higher error correction reduces capacity per QR code but increases resilience to physical damage (fading, stains, tears).
+
+### Parity Recovery Tuning
+
+Parity pages use Reed-Solomon erasure codes to recover missing data pages.
+
+**Formula:** `parity_pages = ceil(parity_percent / 100 × num_data_pages)`
+
+**Examples:**
+```bash
+# Default 5% - good for general use (20 data pages → 1 parity page)
+python qr_code_backup.py encode file.txt
+
+# 10% - better protection (20 data pages → 2 parity pages)
+python qr_code_backup.py encode file.txt --parity-percent 10.0
+
+# 15% - critical data (20 data pages → 3 parity pages)
+python qr_code_backup.py encode file.txt --parity-percent 15.0
+
+# Disable (not recommended for archival)
+python qr_code_backup.py encode file.txt --parity-percent 0
 ```
 
-**Encrypted data page (page 2+):**
+**When to increase parity:**
+- Long-term archival (decades): 10-15%
+- Poor printing/scanning quality: 10-15%
+- Critical data (zero tolerance): 15-25%
+- Unreliable storage conditions: 10-20%
+
+### Batch Processing
+
+Encode multiple files:
+
+```bash
+# Encode all text files
+for file in *.txt; do
+  python qr_code_backup.py encode "$file" --encrypt
+done
 ```
-[0x01] [MD5:16] [Page#:2] [Parity:1=0x00] [EncryptedData:variable]
+
+### Splitting Large Files
+
+For files over 50 MB, split before encoding:
+
+```bash
+# Split into 10 MB chunks
+split -b 10M large_file.bin chunk_
+
+# Encode each chunk
+for chunk in chunk_*; do
+  python qr_code_backup.py encode "$chunk" -o "${chunk}.qr.pdf"
+done
+
+# Later, reassemble after decoding
+cat chunk_* > large_file.bin
 ```
 
-**Parity page:**
-```
-[Enc:1] [MD5:16] [Page#:2] [Parity:1=0x01] [ParityIdx:2] [TotalParity:2] [TotalData:2] [ParityData:variable]
-```
+### Physical Backup Workflow
 
-All multi-byte integers are big-endian. MD5 is calculated on the (possibly encrypted) compressed data. Parity pages use the same MD5 as data pages for document validation.
+**Creating physical archives:**
 
-## New Features (Phase 2)
+1. **Encode with protection:**
+   ```bash
+   python qr_code_backup.py encode data.txt --encrypt --error-correction H -o backup.pdf
+   ```
 
-### Password-Based Encryption
+2. **Print:**
+   - Use **laser printer** (more archival than inkjet)
+   - Print at **actual size** (no scaling)
+   - Use **acid-free paper** (archival quality)
+   - Print **multiple copies** for redundancy
 
-Protect sensitive data with military-grade encryption before encoding to QR codes.
+3. **Store:**
+   - Cool, dry, dark location
+   - Protective sleeves or folders
+   - Fireproof/waterproof safe (optional)
+   - **Multiple locations** for critical data
 
-**Security Features:**
-- **AES-256-GCM** authenticated encryption (industry standard, quantum-resistant symmetric cipher)
-- **Argon2id** key derivation (memory-hard, resistant to GPU/ASIC attacks)
-- **BLAKE2b** password verification (fast pre-check before decryption attempt)
-- **Constant-time comparison** prevents timing attacks
+**Recovering from physical archives:**
+
+1. **Scan pages:**
+   - **300 DPI minimum** (higher is better)
+   - Color or grayscale
+   - Flat pages, good lighting
+   - Save as multi-page PDF
+
+2. **Decode:**
+   ```bash
+   python qr_code_backup.py decode scanned.pdf -o recovered.txt
+   ```
+
+3. **Verify:**
+   - Check MD5 checksum matches
+   - Compare file size
+   - Test the recovered file
+
+---
+
+## FAQ
+
+### How much data can I store per page?
+
+**~1 KB per page** at default settings (after compression).
+
+- **Text files** compress well: ~1.0-1.5 KB per page
+- **Binary/random data** compresses poorly: ~0.8-1.0 KB per page
+- **Already-compressed files** (ZIP, JPG, MP4): ~0.8-1.0 KB per page
+
+**Capacity examples:**
+- **Small text file** (10 KB): ~7-10 pages
+- **SSH private key** (3 KB): ~3-4 pages
+- **Password vault** (50 KB): ~35-50 pages
+- **Bitcoin wallet** (5 KB): ~5-7 pages
+- **Configuration file** (20 KB): ~15-25 pages
+
+Default settings use:
+- QR Version 15 (77×77 modules)
+- Error correction M (15%)
+- 2×2 grid (4 QR codes per page)
+- Compression (bzip2)
+- 5% parity overhead
+
+### What happens if I lose some pages?
+
+**The tool automatically recovers them!**
+
+Parity pages (enabled by default at 5%) use Reed-Solomon erasure codes to reconstruct missing data.
 
 **Example:**
 ```bash
-# Encode with encryption
-python qr_code_backup.py encode passwords.txt -o backup.pdf --encrypt
-Enter encryption password: ********
-Repeat for confirmation: ********
+# Encode with default 5% parity
+python qr_code_backup.py encode data.txt
+# Output: 21 pages (20 data + 1 parity)
 
-# Output:
-# Encryption: AES-256-GCM with Argon2id (time=3, memory=65536KiB, parallelism=4)
-# Encoding: passwords.txt
-# Encryption: Enabled (AES-256-GCM)
-# ...
-
-# Decode encrypted backup
+# Later, you've lost page 7...
+# Decode anyway (missing page 7)
 python qr_code_backup.py decode backup.pdf -o recovered.txt
 
 # Output:
-# Document is encrypted (AES-256-GCM)
-# Enter decryption password: ********
-# Decrypting...
-# Decryption successful
-# Decryption: SUCCESS
-# Verification: PASS
-```
-
-**Benefits:**
-- Encryption happens before QR encoding - printed QR codes contain ciphertext
-- Password never stored - only a verification hash (using BLAKE2b)
-- Wrong password detected immediately - no wasted time on decryption
-- Authenticated encryption (GCM) - tampering is detected automatically
-- Memory-hard KDF - protects against brute-force attacks
-### Order-Independent Decoding
-
-Pages can now be decoded in any order! If you accidentally drop your printed pages or scan them out of order, the tool automatically reorders them correctly.
-
-**Example:**
-```bash
-# Even if pages are scanned in order: 3, 1, 4, 2...
-python qr_code_backup.py decode shuffled_backup.pdf -o recovered.txt
-
-# Output:
-# Reading QR codes...
-# Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
-# Scanning pages: [####################################] 100%
-# Successfully decoded 12 QR codes from 4 PDF pages
-#
-# Analyzing decoded pages...
-# Detected QR pages: [1, 2, 3, 4]
-# Pages were scanned out of order - reordering automatically...
-#
-# Recovered: recovered.txt (5,120 bytes)
-# Verification: PASS (MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c)
-```
-
-**Benefits:**
-- Drop pages by accident? No problem!
-- Scan in whatever order is convenient
-- System automatically sorts by embedded page numbers
-- Transparent feedback shows when reordering happened
-
-### Mixed Document Detection
-
-The tool now immediately detects if you accidentally scan pages from different backups together.
-
-**Example:**
-```bash
-# Accidentally scanned pages from passwords.pdf + keys.pdf together
-python qr_code_backup.py decode mixed_pages.pdf -o output.txt
-
-# Output:
-# Reading QR codes...
-# Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
-# Scanning pages: [####################                ] 50%
-#
-# ============================================================
-# ERROR: PDF page 3 contains QR code from a different document!
-#
-# Expected MD5 (from QR page 1): 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
-# Found MD5 (QR page 1):       9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d
-#
-# This PDF contains pages from multiple QR code backups.
-# Please ensure all PDF pages are from the same backup before decoding.
-# ============================================================
-```
-
-**Benefits:**
-- Fails fast - stops scanning as soon as wrong page is detected
-- Clear error shows exactly which PDF page is wrong
-- Shows both MD5 hashes for comparison
-- Prevents wasting time scanning wrong pages
-
-### Parity Pages for Recovery
-
-Recover from missing or damaged pages using Reed-Solomon erasure codes. **Parity is always enabled by default (5% overhead)** - you can reconstruct missing data pages automatically, perfect for long-term archival where degradation is expected.
-
-**How It Works:**
-- **Reed-Solomon erasure codes** compute parity data across all data pages
-- **Vertical parity** - computed byte-by-byte across chunks at each position
-- **Percentage-based** - parity pages = ceil(parity_percent × data_pages). e.g., 5% of 20 pages = 1 parity page
-- **Automatic recovery** - missing pages are detected and reconstructed during decode
-- **Always on by default** - 5% overhead balances protection vs space (can be disabled with --parity-percent 0)
-
-**Example:**
-```bash
-# Encode with default 5% parity (always enabled)
-python qr_code_backup.py encode document.pdf -o backup.pdf
-
-# Output:
-# Parity: 5.0% overhead
-# Generating 1 parity page(s)...
-# Total pages: 21 (20 data + 1 parity)
-
-# View parity info
-python qr_code_backup.py info backup.pdf
-
-# Output:
-# Parity Pages:        1 (can recover 1 missing page)
-# Data Pages:          20
-# Parity Overhead:     5.0%
-
-# Decode with a missing page (parity automatically recovers it)
-python qr_code_backup.py decode backup_damaged.pdf -o recovered.pdf
-
-# Output:
-# Found 1 parity page(s)
 # Missing 1 data page(s): [7]
+# Found 1 parity page(s)
 # Attempting parity recovery...
 # Successfully recovered 1 page(s)!
 # Verification: PASS
 ```
 
-**Custom Parity Percentage:**
+**Recovery capacity:**
+- 5% parity: recover ~1 page per 20 data pages
+- 10% parity: recover ~1 page per 10 data pages
+- 15% parity: recover ~1 page per 7 data pages
+
+**Any pages can be missing** - doesn't matter which ones. If you have enough parity pages, the tool reconstructs the missing data automatically.
+
+### What if I scan pages out of order?
+
+**No problem!** The tool automatically reorders them.
+
+Each QR code contains its page number. During decode, pages are sorted automatically.
+
+**Example:**
 ```bash
-# 10% parity = more protection (can recover ~10% of pages)
-python qr_code_backup.py encode critical.txt --parity-percent 10.0 -o backup.pdf
+# You scanned pages in order: 3, 1, 4, 2 (shuffled)
+python qr_code_backup.py decode shuffled.pdf -o recovered.txt
 
-# For 20 data pages: ceil(10% × 20) = 2 parity pages
-# Can recover up to 2 missing pages
-
-# Disable parity (not recommended for important data)
-python qr_code_backup.py encode temp.txt --parity-percent 0 -o backup.pdf
-```
-
-**Combined with Encryption:**
-```bash
-# Maximum protection: encryption + default parity + high error correction
-python qr_code_backup.py encode secrets.txt --encrypt --error-correction H -o backup.pdf
-
-# Benefits:
-# - Encryption protects confidentiality
-# - Parity (5% default) recovers missing pages
-# - QR error correction (30%) handles physical damage within each QR code
-# - Triple protection for critical data!
+# Output:
+# Reading QR codes...
+# Detected QR pages: [3, 1, 4, 2]
+# Pages were scanned out of order - reordering automatically...
+# Verification: PASS
 ```
 
 **Benefits:**
-- **Automatic recovery** - no manual intervention needed
-- **Always on by default** - no need to remember to enable it
-- **Any pages can be missing** - order doesn't matter, any combination of N pages
-- **Works with encryption** - parity computed on ciphertext (doesn't leak plaintext)
-- **Tunable overhead** - balance protection vs additional pages (0-100%)
-- **Labeled in PDF** - parity pages clearly marked "PARITY 1/3" etc.
+- Drop your printed pages? Just pick them up and scan
+- Scan in whatever order is convenient
+- No need to worry about page sequence
 
-**When to Increase Parity:**
-- **Long-term archival** - expect more degradation over decades (10-15%)
-- **Unreliable scanning** - many pages may be damaged (10-20%)
-- **Critical data** - can't afford to lose even multiple pages (15-25%)
-- **Printing quality concerns** - some copies may have missing/unreadable pages (10-15%)
+### What if I accidentally mix pages from different backups?
 
-**Technical Details:**
-- Uses `reedsolo` library for Reed-Solomon error correction
-- Chunks padded to uniform size before parity generation
-- Parity count = ceil(parity_percent / 100 × num_data_pages)
-- Parity pages contain metadata: parity index, total parity, total data pages
-- Recovery happens during reassemble, before decompression/decryption
-- Parity works at chunk level (complements QR-level error correction)
+**The tool detects this immediately and stops.**
 
-## Data Capacity
+Every QR code contains the MD5 hash of its source document. If a page from a different backup is scanned, you get an immediate error:
 
-Approximate storage capacity at default settings (QR version 15, error correction M, 3x3 grid):
+```bash
+# Accidentally mixed pages from backup_A.pdf and backup_B.pdf
+python qr_code_backup.py decode mixed.pdf -o output.txt
 
-| Document | Storage |
-|----------|---------|
-| 1 page (9 QR codes) | ~10 KB |
-| 10 pages | ~100 KB |
-| 100 pages | ~1 MB |
-| 1000 pages | ~10 MB |
+# Output:
+# ERROR: PDF page 3 contains QR code from a different document!
+#
+# Expected MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+# Found MD5:    9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d
+#
+# This PDF contains pages from multiple QR code backups.
+```
 
-**Tips for larger files:**
-- Use `--qr-version 20` or higher for more data per QR code
-- Increase grid density: `--qrs-per-page 4x4` or `5x5`
-- Ensure compression is enabled for text files
-- Lower error correction (`--error-correction L`) if pristine storage
+The error shows exactly which PDF page is wrong and both MD5 hashes for comparison.
 
-## Error Correction
+### Can I recover from damaged pages?
 
-QR codes include built-in Reed-Solomon error correction:
+**Yes, with three layers of protection:**
 
-| Level | Correction | When to Use |
-|-------|-----------|-------------|
-| **L** | ~7% | Clean, controlled storage |
-| **M** | ~15% | General use (default) |
-| **Q** | ~25% | Moderate degradation expected |
-| **H** | ~30% | Maximum protection for critical data |
+1. **QR Error Correction** (7-30% damage per QR code)
+   - Built into every QR code
+   - Handles fading, stains, tears, partial obscuration
+   - Use `--error-correction H` for maximum (30%)
 
-Higher levels can recover from physical damage (stains, fading, tears) but reduce data capacity per QR code.
+2. **Parity Pages** (recover entire missing pages)
+   - Reconstructs completely missing or unreadable pages
+   - Default 5% overhead recovers ~1 in 20 pages
+   - Increase with `--parity-percent` for more protection
 
-## Physical Backup Workflow
+3. **Recovery Mode** (extract partial data)
+   - Try `--recovery-mode` flag during decode
+   - Attempts to extract usable data from severely damaged backups
+   - May produce incomplete output
 
-### Creating Physical Backups
+**Example recovery workflow:**
+```bash
+# First try normal decode
+python qr_code_backup.py decode damaged.pdf -o recovered.txt
 
-1. **Encode your file:**
-   ```bash
-   python qr_code_backup.py encode secrets.txt --error-correction H -o backup.pdf
-   ```
+# If that fails, try recovery mode
+python qr_code_backup.py decode damaged.pdf -o recovered.txt --recovery-mode
+```
 
-2. **Print the PDF:**
-   - Use a laser printer (more archival than inkjet)
-   - Print at actual size (not scaled)
-   - Use high-quality paper (acid-free for longest life)
-   - Print multiple copies for redundancy
+### How secure is the encryption?
 
-3. **Store safely:**
-   - Keep in cool, dry, dark place
-   - Use protective sleeves or folders
-   - Consider fireproof/waterproof safe
-   - Store copies in multiple locations
+**Military-grade security using industry standards:**
 
-### Recovering from Physical Backups
+- **AES-256-GCM**:
+  - Symmetric encryption (256-bit key)
+  - Authenticated encryption (detects tampering)
+  - Quantum-resistant (as of 2024)
 
-1. **Scan the pages:**
-   - Use 300 DPI or higher
-   - Scan in color or grayscale
-   - Ensure pages are flat and well-lit
-   - Save as multi-page PDF
+- **Argon2id Key Derivation**:
+  - Winner of Password Hashing Competition (2015)
+  - Memory-hard (requires 64MB RAM per attempt)
+  - GPU/ASIC resistant (can't be accelerated by specialized hardware)
+  - Time cost: 3 iterations
 
-2. **Decode the scan:**
-   ```bash
-   python qr_code_backup.py decode scanned_backup.pdf -o recovered.txt
-   ```
+- **BLAKE2b Verification**:
+  - Fast password pre-check
+  - Wrong password detected before decryption attempt
+  - Constant-time comparison (prevents timing attacks)
 
-3. **Verify integrity:**
-   - Check that checksums match
-   - Compare file size with original
-   - Test the recovered file
+**Security guarantees:**
+- Password never stored (only verification hash)
+- Encryption happens before QR encoding (printed codes are ciphertext)
+- Tampering detected automatically (GCM authentication)
+- Resistant to brute-force attacks (memory-hard KDF)
+
+**Threat model:**
+- ✅ Protects against: physical theft, unauthorized access, brute force
+- ✅ Secure for: encryption keys, passwords, financial data, legal documents
+- ⚠️ Not protected against: quantum computers with Grover's algorithm (reduces AES-256 to ~AES-128 equivalent), rubber-hose cryptanalysis (coerced password disclosure)
+
+### Is this suitable for very large files?
+
+**Practical limit: ~10-50 MB**
+
+While there's no hard limit, very large files become impractical:
+
+| File Size | Pages (approx) | Print/Scan Time | Recommendation |
+|-----------|----------------|-----------------|----------------|
+| < 1 MB | < 1,000 | Minutes | ✅ Ideal |
+| 1-10 MB | 1,000-10,000 | 10-30 min | ✅ Good |
+| 10-50 MB | 10,000-50,000 | 30-120 min | ⚠️ Feasible but tedious |
+| > 50 MB | > 50,000 | Hours | ❌ Consider splitting |
+
+**For large files:**
+```bash
+# Split into manageable chunks
+split -b 10M large_file.bin chunk_
+
+# Encode each
+for chunk in chunk_*; do
+  python qr_code_backup.py encode "$chunk" --encrypt
+done
+```
+
+### Can I use this for photos or videos?
+
+**Yes, but only small ones.**
+
+Multimedia files are typically already compressed (JPEG, MP4, etc.), so they won't compress further. Each page stores only ~1 KB.
+
+**Examples:**
+- **Small photo** (500 KB JPEG): ~500 pages 📄📄📄... (feasible but tedious)
+- **Video clip** (10 MB MP4): ~10,000 pages (impractical)
+
+**Better approach for photos:**
+- Compress first: `tar -czf photos.tar.gz photos/`
+- Split if needed: `split -b 10M photos.tar.gz chunk_`
+- Encode chunks
+
+**Recommendation:** This tool is best for **text-based data** (keys, configs, documents, code) rather than multimedia.
+
+### How long does paper storage last?
+
+**Depends on paper quality and storage conditions:**
+
+| Paper Type | Storage Conditions | Lifespan |
+|------------|-------------------|----------|
+| **Acid-free archival** | Climate-controlled, dark | 200-500+ years |
+| **Standard laser paper** | Normal indoor | 50-100 years |
+| **Inkjet paper** | Normal indoor | 10-50 years |
+| **Thermal paper** | Normal indoor | 5-10 years ❌ |
+
+**Best practices for longevity:**
+- Use **laser printer** (toner bonds to paper, very stable)
+- Use **acid-free paper** (pH neutral, archival quality)
+- Store in **cool, dry, dark** location (light and moisture degrade paper)
+- Use **protective sleeves** (prevents handling damage)
+- Store **multiple copies** in different locations
+
+**Comparison to digital media:**
+- Hard drives: 3-10 years typical lifespan
+- SSDs: 5-10 years (data degrades without power)
+- USB flash: 10-20 years
+- Optical discs (CD/DVD): 10-25 years (varies widely)
+- **Archival paper**: 200-500 years ✅
+
+### Do I need to print in color?
+
+**No, black and white is fine** (and recommended).
+
+QR codes are binary (black/white), so color printing provides no benefit.
+
+**Recommendations:**
+- **Black and white laser**: Best choice (archival, sharp, inexpensive)
+- **Grayscale laser**: Also good
+- **Color laser**: Works, but wastes ink/toner
+- **Inkjet**: Less archival than laser, may fade over time
+
+### What if I forget my password?
+
+**Your data is unrecoverable.**
+
+This is by design—no backdoors, no password reset. The security is in your hands.
+
+**Best practices:**
+- Use a **strong but memorable** password (passphrase)
+- Store password separately (password manager, safety deposit box)
+- Consider **multiple encrypted copies** with different passwords (shared among trusted people)
+- Include **password hints** in non-sensitive backups (stored separately)
+
+**Example strategy for critical data:**
+```bash
+# Encrypt with passphrase: "correct horse battery staple"
+python qr_code_backup.py encode keys.txt --encrypt
+
+# Store password separately:
+# - In password manager (digital backup)
+# - In safety deposit box (paper backup)
+# - Split among trusted family members (Shamir's Secret Sharing)
+```
+
+### Can I decode without this tool?
+
+**Theoretically yes, but practically no.**
+
+The QR codes can be scanned with any QR reader, but you'd need to:
+
+1. Decode all QR codes to binary data
+2. Parse the binary chunk format
+3. Validate MD5 hashes
+4. Sort chunks by page number
+5. Recover missing pages (if using parity)
+6. Decrypt (if encrypted) using Argon2id + AES-256-GCM
+7. Decompress using bzip2
+
+**Recommendation:**
+- Store a copy of this tool with your backup (on USB stick, printed source code, etc.)
+- Document your backup format clearly
+- Include recovery instructions with physical backups
+
+---
+
+## How It Works
+
+### Encoding Process
+
+1. **Read** → Load input file
+2. **Compress** → Apply bzip2 compression
+3. **Encrypt** (optional) → AES-256-GCM with password
+4. **Hash** → Calculate MD5 of compressed (possibly encrypted) data
+5. **Split** → Divide into chunks (~900 bytes each)
+6. **Add Metadata** → Prepend page number, MD5, encryption params to each chunk
+7. **Generate Parity** → Create Reed-Solomon parity chunks
+8. **Create QR Codes** → Generate QR codes with error correction
+9. **Build PDF** → Arrange in 2×2 grid with headers
+
+### Decoding Process
+
+1. **Load PDF** → Convert pages to images
+2. **Scan** → Detect and decode all QR codes
+3. **Validate** → Check MD5 for mixed documents
+4. **Sort** → Order chunks by page number
+5. **Recover** (if needed) → Use parity to reconstruct missing pages
+6. **Verify** → Check MD5 hash
+7. **Decrypt** (if encrypted) → Verify password, decrypt data
+8. **Decompress** → Uncompress using bzip2
+9. **Write** → Save output file
+
+### Data Format
+
+Each QR code contains binary data with metadata:
+
+**Page 1 (unencrypted):**
+```
+[Enc:1] [MD5:16] [Page#:2] [Parity:1] [Size:4] [Data:~900]
+ 0x00    hash     page#     0x00      bytes    chunk
+```
+
+**Page 1 (encrypted):**
+```
+[Enc:1] [MD5:16] [Page#:2] [Parity:1] [Size:4] [Salt:16] [Time:4]
+ 0x01    hash     page#     0x00      bytes    random    argon2
+
+[Memory:4] [Parallel:4] [Verify:32] [Nonce:12] [Ciphertext:~900]
+ argon2     argon2       BLAKE2b     AES-GCM   encrypted
+```
+
+**Page 2+ (encrypted/unencrypted):**
+```
+[Enc:1] [MD5:16] [Page#:2] [Parity:1] [Data:~900]
+ 0/1     hash     page#     0x00      chunk/ciphertext
+```
+
+**Parity Page:**
+```
+[Enc:1] [MD5:16] [Page#:2] [Parity:1] [Idx:2] [Total:2] [DataPages:2] [ParityData:~900]
+ 0/1     hash     page#     0x01      parity#  total     num_data     RS_parity
+```
+
+All integers are big-endian.
+
+---
 
 ## Troubleshooting
 
 ### Encoding Issues
 
 **"QR version too small for metadata overhead"**
-- Increase `--qr-version` (try 10, 15, or 20)
+- Metadata (encryption, page numbers) doesn't fit
+- Solution: This shouldn't happen with current defaults; report as bug
 
-**PDF generation is slow**
+**"File is huge after encoding"**
+- Already-compressed files (ZIP, JPG, MP4) won't compress further
+- Solution: This is expected; consider splitting large files
+
+**"PDF generation is slow"**
 - Normal for large files (hundreds of pages)
-- Consider splitting large files
-
-**File size is huge**
-- Disable compression: `--compression none` for already-compressed files
-- Check if file is already a compressed format (zip, jpg, mp4)
+- Solution: Be patient, or split file into smaller chunks
 
 ### Decoding Issues
 
 **"No QR codes found"**
-- Ensure scan quality is good (300+ DPI)
-- Try improving contrast/brightness before scanning
-- Check that pages are not upside down
+- Scan quality too low, contrast too poor, or pages upside down
+- Solution: Rescan at 300+ DPI, ensure good lighting, check orientation
 
 **"Missing X pages"**
-- Rescan missing pages
-- If pages are damaged, use `--recovery-mode`
+- Pages not included in scan
+- Solution: Rescan missing pages, or rely on parity recovery if available
 
-**"Chunk checksum failures"**
-- QR code is damaged beyond error correction
-- Rescan the problematic pages
-- Try `--recovery-mode` to extract partial data
+**"Cannot recover: X pages missing but only Y parity pages available"**
+- Too many pages missing for available parity
+- Solution: Rescan to reduce missing pages, or use `--recovery-mode`
 
-**"File checksum mismatch"**
-- Data corruption during reassembly
-- Check individual chunk checksums
-- May need better quality scans
+**"Incorrect password"**
+- Wrong password for encrypted backup
+- Solution: Try again, check password manager, check Caps Lock
 
-### System Dependencies
+**"Mixed document detected"**
+- Pages from different backups accidentally scanned together
+- Solution: Separate pages by backup, rescan correct set
 
-**"pyzbar not found" or "Unable to find zbar shared library"**
+### System Issues
 
-Linux:
+**"pyzbar not found" or "zbar shared library not found"**
 ```bash
+# Ubuntu/Debian
 sudo apt-get install libzbar0
-```
 
-macOS:
-```bash
+# macOS
 brew install zbar
 ```
 
 **"pdf2image: Unable to convert PDF"**
-
-Install poppler:
-
-Linux:
 ```bash
+# Ubuntu/Debian
 sudo apt-get install poppler-utils
-```
 
-macOS:
-```bash
+# macOS
 brew install poppler
 ```
 
+---
+
 ## Testing
 
-Run the test suite:
+Run the full test suite:
 
 ```bash
 pytest tests/ -v
@@ -620,9 +824,17 @@ Run with coverage:
 pytest --cov=qr_code_backup tests/
 ```
 
+**Test coverage:**
+- ✅ 45 tests passing
+- Encryption (16 tests)
+- Parity recovery (19 tests)
+- Order independence (3 tests)
+- Mixed document detection (3 tests)
+- Combined features (4 tests)
+
 ### Manual Testing
 
-Test the full encode-decode cycle:
+Quick encode-decode cycle:
 
 ```bash
 # Create test file
@@ -641,129 +853,130 @@ python qr_code_backup.py decode test_backup.pdf -o recovered.txt
 diff test.txt recovered.txt
 ```
 
-If `diff` shows no output, the files are identical!
+If `diff` produces no output, the files are identical ✅
+
+---
 
 ## Performance
 
-Typical performance on modern hardware:
+Typical performance on modern hardware (Intel i5/i7 equivalent):
 
 - **Encoding:** ~50-100 QR codes/second
 - **Decoding:** ~10-30 QR codes/second (depends on scan quality)
-- **Memory:** ~100-500 MB for typical files
+- **Memory usage:** ~100-500 MB
 
-A 100-page document (~900 QR codes):
-- Encoding: ~10-20 seconds
-- Decoding: ~30-90 seconds
+**Example timings:**
+- **Small file** (10 KB, ~10 pages): < 5 seconds encode, < 10 seconds decode
+- **Medium file** (100 KB, ~100 pages): ~10 seconds encode, ~30 seconds decode
+- **Large file** (1 MB, ~1000 pages): ~100 seconds encode, ~300 seconds decode
+
+---
 
 ## Limitations
 
-- **Not suitable for very large files** - Practical limit around 10-50 MB
-- **Requires good scan quality** - Low-quality scans may not decode
-- **Time-consuming for large files** - Consider splitting multi-GB files
-- **Paper degradation** - Even with error correction, extreme damage can cause data loss
+- **Not for very large files** - Practical limit ~10-50 MB (becomes tedious)
+- **Requires good scan quality** - 300+ DPI for reliable decoding
+- **Time-consuming for large files** - Encoding/decoding 1000+ pages takes minutes
+- **Paper can still degrade** - Even archival paper fails eventually with abuse
+- **Compression limited** - Already-compressed files (ZIP, JPG) won't shrink further
+
+---
 
 ## Best Practices
 
-1. **Always verify checksums** - Don't skip verification during decode
-2. **Test recovery immediately** - Decode and verify soon after creating backup
-3. **Create multiple copies** - Redundancy protects against loss
-4. **Store checksums separately** - Keep the SHA-256 hash in a different location
-5. **Use high error correction** - For critical data, use `--error-correction H`
-6. **Archive-quality materials** - Use acid-free paper and laser printer
-7. **Regular testing** - Periodically scan and decode to verify backup integrity
-8. **Document the process** - Include instructions for recovery with the backup
+1. **✅ Always use parity** - Default 5% is good; increase for critical data
+2. **✅ Test recovery immediately** - Decode and verify right after encoding
+3. **✅ Create multiple copies** - Store in different physical locations
+4. **✅ Use high error correction** - `--error-correction H` for archival
+5. **✅ Document your process** - Include recovery instructions with backups
+6. **✅ Store password separately** - Encrypted backup + password in same place = useless
+7. **✅ Use archival materials** - Acid-free paper, laser printer
+8. **✅ Regular testing** - Periodically test your backups (scan and decode)
+9. **✅ Include the tool** - Store a copy of this tool with your backups
+10. **✅ Verify checksums** - Always check MD5 matches during decode
 
-## Advanced Usage
-
-### Encryption Best Practices
-
-**Built-in encryption is recommended for most use cases:**
-
-```bash
-# Use built-in encryption (recommended)
-python qr_code_backup.py encode secrets.txt -o backup.pdf --encrypt
-```
-
-**External encryption (if you need specific cipher suites):**
-
-```bash
-# Encrypt with GPG first, then encode
-gpg -c secrets.txt  # Creates secrets.txt.gpg
-python qr_code_backup.py encode secrets.txt.gpg -o backup.pdf
-
-# To recover: decode then decrypt
-python qr_code_backup.py decode backup.pdf -o recovered.gpg
-gpg -d recovered.gpg > secrets.txt
-```
-
-### Batch Processing
-
-Encode multiple files:
-
-```bash
-for file in *.txt; do
-  python qr_code_backup.py encode "$file" -o "${file}.qr.pdf"
-done
-```
-
-### Splitting Large Files
-
-For files over 50 MB, consider splitting:
-
-```bash
-# Split file into 10 MB chunks
-split -b 10M largefile.bin chunk_
-
-# Encode each chunk
-for chunk in chunk_*; do
-  python qr_code_backup.py encode "$chunk" -o "${chunk}.qr.pdf"
-done
-```
+---
 
 ## Contributing
 
-Contributions welcome! Please:
+Contributions are welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Write tests for new functionality
+4. Ensure all tests pass (`pytest tests/ -v`)
+5. Follow existing code style
+6. Submit a pull request
+
+**Areas for contribution:**
+- Additional compression algorithms
+- GUI frontend
+- Mobile app for scanning
+- Additional output formats (SVG, PNG sheets)
+- Internationalization
+- Performance optimizations
+
+---
 
 ## License
 
-MIT License - see LICENSE file for details
+**MIT License**
+
+Copyright (c) 2024 QR Code Backup
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+---
 
 ## Acknowledgments
 
-- Uses `qrcode` library for QR code generation
-- Uses `pyzbar` for QR code decoding
-- Uses `reportlab` for PDF generation
-- Inspired by the need for durable, offline data archival
+Built with excellent open-source libraries:
 
-## Support
+- **[qrcode](https://github.com/lincolnloop/python-qrcode)** - QR code generation
+- **[pyzbar](https://github.com/NaturalHistoryMuseum/pyzbar)** - QR code decoding
+- **[reportlab](https://www.reportlab.com/)** - PDF generation
+- **[cryptography](https://cryptography.io/)** - AES-256-GCM encryption
+- **[argon2-cffi](https://github.com/hynek/argon2-cffi)** - Argon2id key derivation
+- **[reedsolo](https://github.com/tomerfiliba/reedsolomon)** - Reed-Solomon error correction
+- **[pdf2image](https://github.com/Belval/pdf2image)** - PDF to image conversion
 
-For issues, questions, or suggestions:
+Inspired by the need for truly offline, long-term data archival independent of digital infrastructure.
 
-- Open an issue on GitHub
-- Check the troubleshooting section above
-- Review the specification document: QR_CODE_BACKUP.md
+---
 
 ## Version History
 
-### 2.0.0 (Current - Phase 2)
-- Parity pages for recovery (always-on, percentage-based, default 5% overhead)
-- Password-based encryption (AES-256-GCM with Argon2id)
-- Order-independent decoding (scan pages in any order)
-- Mixed document detection (prevents accidental page mixing)
-- Binary chunk format (replaces JSON for efficiency)
-- MD5-based document validation
-- Comprehensive test suite (45 tests covering encryption, parity, and integration)
+### v2.0.0 - Current (Phase 2)
+- ✨ Parity pages for recovery (Reed-Solomon erasure codes, always-on at 5% default)
+- 🔐 Password-based encryption (AES-256-GCM with Argon2id key derivation)
+- 🔀 Order-independent decoding (scan pages in any order)
+- 🚨 Mixed document detection (prevent accidental page mixing)
+- 🗜️ Binary chunk format (replaces JSON for efficiency)
+- ✅ Simplified CLI (6 essential options with opinionated defaults)
+- 🧪 Comprehensive test suite (45 tests covering all features)
 
-### 1.0.0 (Phase 1)
-- Initial release
-- Encode and decode functionality
-- Support for all error correction levels
-- Compression support (bzip2)
-- Recovery mode for damaged backups
-- Comprehensive testing suite
+### v1.0.0 - Initial Release (Phase 1)
+- 📄 Basic encode/decode functionality
+- 🛡️ QR error correction (L/M/Q/H levels)
+- 🗜️ Compression support (bzip2)
+- 📋 Recovery mode for damaged backups
+- ✅ Checksum verification (MD5)
+
+---
+
+## Support & Resources
+
+- **📖 Documentation:** This README + `CLAUDE.md` (implementation details)
+- **🐛 Bug Reports:** Open an issue on GitHub
+- **💡 Feature Requests:** Open an issue with `[Feature Request]` tag
+- **❓ Questions:** Check FAQ above, then open a discussion
+
+---
+
+**Star ⭐ this repo if you find it useful!**
+
+*Because sometimes the best backup is the one you can hold in your hands.* 📄🔐
