@@ -7,11 +7,13 @@ A Python command-line tool for archiving digital data as QR codes printed on pap
 - **Encode any file** into multi-page PDF documents containing QR codes
 - **Decode scanned PDFs** back into the original file
 - **Built-in error correction** (7% to 30%) to handle paper degradation
-- **Automatic compression** (gzip/bzip2) to maximize storage efficiency
-- **Checksum verification** ensures data integrity
-- **Configurable density** - adjust QR code size, version, and grid layout
+- **Automatic compression** (bzip2) to maximize storage efficiency
+- **Checksum verification** ensures data integrity with MD5 validation
+- **Configurable density** - automatic QR version calculation for 2×2 grid layout
 - **Professional output** with headers showing page numbers and metadata
 - **Recovery mode** to extract partial data from damaged archives
+- **🆕 Order-independent decoding** - scan pages in any order, automatic reordering
+- **🆕 Mixed document detection** - immediate error if pages from different backups are mixed
 
 ## Use Cases
 
@@ -241,6 +243,68 @@ Each QR code contains a JSON structure:
   "data": "<base64_encoded_chunk>"
 }
 ```
+
+## New Features (Phase 2)
+
+### Order-Independent Decoding
+
+Pages can now be decoded in any order! If you accidentally drop your printed pages or scan them out of order, the tool automatically reorders them correctly.
+
+**Example:**
+```bash
+# Even if pages are scanned in order: 3, 1, 4, 2...
+python qr_code_backup.py decode shuffled_backup.pdf -o recovered.txt
+
+# Output:
+# Reading QR codes...
+# Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+# Scanning pages: [####################################] 100%
+# Successfully decoded 12 QR codes from 4 PDF pages
+#
+# Analyzing decoded pages...
+# Detected QR pages: [1, 2, 3, 4]
+# Pages were scanned out of order - reordering automatically...
+#
+# Recovered: recovered.txt (5,120 bytes)
+# Verification: PASS (MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c)
+```
+
+**Benefits:**
+- Drop pages by accident? No problem!
+- Scan in whatever order is convenient
+- System automatically sorts by embedded page numbers
+- Transparent feedback shows when reordering happened
+
+### Mixed Document Detection
+
+The tool now immediately detects if you accidentally scan pages from different backups together.
+
+**Example:**
+```bash
+# Accidentally scanned pages from passwords.pdf + keys.pdf together
+python qr_code_backup.py decode mixed_pages.pdf -o output.txt
+
+# Output:
+# Reading QR codes...
+# Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+# Scanning pages: [####################                ] 50%
+#
+# ============================================================
+# ERROR: PDF page 3 contains QR code from a different document!
+#
+# Expected MD5 (from QR page 1): 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+# Found MD5 (QR page 1):       9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d
+#
+# This PDF contains pages from multiple QR code backups.
+# Please ensure all PDF pages are from the same backup before decoding.
+# ============================================================
+```
+
+**Benefits:**
+- Fails fast - stops scanning as soon as wrong page is detected
+- Clear error shows exactly which PDF page is wrong
+- Shows both MD5 hashes for comparison
+- Prevents wasting time scanning wrong pages
 
 ## Data Capacity
 

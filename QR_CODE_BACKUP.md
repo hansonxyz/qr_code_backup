@@ -38,14 +38,18 @@ qr_code_backup encode <input_file> -o <output.pdf> [options]
 **Options:**
 - `-o, --output <path>`: Output PDF file path (default: `<input_file>.qr.pdf`)
 - `--error-correction <level>`: Error correction level - L (7%), M (15%), Q (25%), H (30%) (default: M)
-- `--qr-version <1-40>`: QR code version controlling size/capacity (default: auto)
-- `--dpi <value>`: Output resolution in DPI (default: 300)
-- `--qr-size <mm>`: Physical size of each QR code in millimeters (default: 60mm)
-- `--qrs-per-page <rows>x<cols>`: Grid layout (default: 3x3 = 9 per page)
+- `--module-size <mm>`: QR module size in millimeters (default: 0.9mm)
+- `--page-width <mm>`: Page width in millimeters (default: 215.9mm = US Letter)
+- `--page-height <mm>`: Page height in millimeters (default: 279.4mm = US Letter)
+- `--margin <mm>`: Page margin in millimeters (default: 20mm)
+- `--spacing <mm>`: Spacing between QR codes in millimeters (default: 5mm)
 - `--title <text>`: Title to print on each page header (default: filename)
-- `--page-size <size>`: Paper size - A4, Letter, Legal (default: A4)
 - `--no-header`: Disable header text on pages
-- `--compression <type>`: Pre-compression - none, gzip, bzip2 (default: gzip)
+
+**Key Features:**
+- **Auto-calculated QR version**: Automatically selects optimal QR version to maintain 2×2 grid layout (4 codes per page)
+- **Hardcoded compression**: Always uses bzip2 compression
+- **Binary metadata format**: Efficient binary format with MD5 validation
 
 #### Decode Command
 
@@ -55,10 +59,10 @@ qr_code_backup decode <input.pdf> -o <output_file> [options]
 
 **Required Arguments:**
 - `input_file`: Path to scanned PDF file
+- `-o, --output <path>`: Output file path (required in binary format v1.0)
 
 **Options:**
-- `-o, --output <path>`: Output file path (default: extracted from metadata or `decoded_output`)
-- `--verify`: Verify integrity using checksums if available
+- `--verify`: Verify integrity using MD5 checksums (default: enabled)
 - `--recovery-mode`: Attempt to recover from missing/damaged QR codes
 - `--force`: Overwrite existing output file without prompting
 
@@ -90,36 +94,48 @@ Display metadata about an encoded QR backup PDF (title, original filename, total
 
 #### Data Format
 
-Each QR code encodes a JSON structure:
+**Binary Metadata Format (v1.0):**
 
-```json
-{
-  "format_version": "1.0",
-  "file_name": "original_filename.ext",
-  "file_size": 1234567,
-  "total_pages": 25,
-  "page_number": 1,
-  "chunk_size": 2000,
-  "checksum_type": "sha256",
-  "file_checksum": "abc123...",
-  "chunk_checksum": "def456...",
-  "compression": "gzip",
-  "data": "<base64_encoded_chunk>"
-}
+Each QR code contains binary metadata followed by data (entire chunk is base64 encoded):
+
+**Page 1 Format:**
+```
+[MD5 Hash: 16 bytes][Page Number: 2 bytes uint16][File Size: 4 bytes uint32][Data: variable]
+```
+
+**Other Pages Format:**
+```
+[MD5 Hash: 16 bytes][Page Number: 2 bytes uint16][Data: variable]
 ```
 
 **Fields:**
-- `format_version`: Tool version for backward compatibility
-- `file_name`: Original filename for reconstruction
-- `file_size`: Total size in bytes
-- `total_pages`: Number of pages in complete set
-- `page_number`: Current page (1-indexed)
-- `chunk_size`: Bytes in this chunk (before encoding)
-- `checksum_type`: Algorithm used (sha256, md5)
-- `file_checksum`: Hash of complete original file
-- `chunk_checksum`: Hash of this chunk for verification
-- `compression`: Compression algorithm applied
-- `data`: Base64-encoded (and optionally compressed) data chunk
+- **MD5 Hash** (16 bytes binary): Hash of the entire compressed file
+  - Same on every page for validation
+  - Detects mixed documents (different MD5 = different file)
+  - Verifies data integrity after reassembly
+
+- **Page Number** (2 bytes, big-endian uint16): 1-indexed page number
+  - Range: 1 to 65,536 (2^16 limit)
+  - Used for sequence validation and reassembly
+
+- **File Size** (4 bytes, big-endian uint32, page 1 only):
+  - Original uncompressed file size
+  - Range: 0 to 4,294,967,296 bytes (2^32 = 4GB limit)
+  - Not present on pages 2+
+
+- **Data** (variable): Chunk of bzip2-compressed file data
+
+**Validation Features:**
+- MD5 consistency check across all pages
+- Page sequence validation (1, 2, 3, ... N with no gaps)
+- Duplicate page detection
+- Mixed document detection
+- Final MD5 verification after reassembly
+
+**Metadata Overhead:**
+- Page 1: 22 bytes (MD5 + Page# + FileSize)
+- Other pages: 18 bytes (MD5 + Page#)
+- Plus ~33% for base64 encoding
 
 #### PDF Layout
 
@@ -134,10 +150,13 @@ Each QR code encodes a JSON structure:
 ```
 
 **QR Code Grid:**
-- Default: 3x3 grid (9 QR codes per page)
-- Margins: 20mm on all sides
-- Spacing: 10mm between QR codes
-- Each QR code: 60mm × 60mm (at 300 DPI)
+- Default: 2×2 grid (4 QR codes per page)
+- Auto-calculated based on module size and page dimensions
+- Margins: 20mm on all sides (configurable)
+- Spacing: 5mm between QR codes (configurable)
+- QR codes are horizontally centered on page
+- Each QR code size depends on module size and auto-calculated version
+  - Example: 0.9mm module × Version 18 = 81.9mm × 81.9mm per code
 
 #### Error Correction Levels
 
@@ -152,18 +171,22 @@ Higher levels reduce data capacity per QR code but increase resilience.
 
 #### Data Capacity Estimates
 
-At default settings (QR version 10, error correction M):
-- Raw capacity per QR code: ~1,250 bytes
-- After JSON overhead: ~1,100 bytes of file data
-- Per page (3x3): ~9,900 bytes
-- 100-page document: ~990 KB
-- 1000-page document: ~9.9 MB
+At default settings (0.9mm module size, auto-calculated version 18, error correction M):
+- QR code version: 18 (auto-calculated to fit 2×2 grid)
+- Chunk size: ~314 bytes per QR code
+- Per page (2×2): ~1,256 bytes
+- 5KB file: ~19 QR codes = 5 PDF pages
+- 25KB file: ~80 QR codes = 20 PDF pages
 
-**Optimization strategies:**
-- Increase QR version (larger codes, more data)
-- Increase QRs per page (smaller margins)
-- Use compression for text/repetitive data
-- Lower error correction for controlled environments
+**Recommended file sizes:**
+- Small files (< 5KB): 1-5 pages
+- Medium files (5-25KB): 5-20 pages
+- Practical limit: ~25KB (anything larger becomes unwieldy to print/scan)
+
+**Tuning capacity:**
+- Smaller module size (0.7mm): Larger QR version → more data per code (riskier scanning)
+- Larger module size (1.2mm): Smaller QR version → less data per code (safer scanning)
+- System automatically adjusts QR version to maintain 2×2 grid layout
 
 ### Error Handling and Recovery
 
@@ -187,59 +210,165 @@ At default settings (QR version 10, error correction M):
 ### Validation and Verification
 
 #### Encode Process
-1. Calculate file checksum before splitting
-2. Embed checksum in every QR code
-3. Generate verification report with file hash
+1. Compress file with bzip2
+2. Calculate MD5 hash of compressed data
+3. Check file size limit (2^32 bytes maximum)
+4. Check page count limit (2^16 pages maximum)
+5. Embed MD5 hash in every QR code
+6. Generate verification report with MD5 hash
 
-#### Decode Process
-1. Read all QR codes from all pages
-2. Verify page sequence (check for gaps)
-3. Validate individual chunk checksums
-4. Reassemble data chunks
-5. Verify final file checksum
-6. Report any discrepancies
+#### Decode Process (Binary Format v1.0)
+1. Read all QR codes from all pages (returns binary chunks)
+2. Parse binary metadata from each chunk
+3. **MD5 Consistency Check**: Verify all chunks have identical MD5 hash
+   - Detects mixed documents (accidentally scanned pages from different backups)
+4. **Page Sequence Validation**: Verify pages are 1, 2, 3, ... N with no gaps
+   - Detects missing pages
+5. **Duplicate Detection**: Check for duplicate page numbers
+6. Reassemble data chunks in correct order
+7. Decompress with bzip2
+8. **Final MD5 Verification**: Verify MD5 of reassembled compressed data matches page headers
+9. Report any discrepancies with detailed error messages
+
+**Error Messages:**
+- `"Mixed documents detected! Pages [X, Y] have different MD5 hashes"`
+- `"Missing pages in sequence: [3, 7]. All pages from 1 to N must be present"`
+- `"Duplicate pages detected: [2, 5]"`
+- `"Page 1 not found - cannot determine file size"`
+- `"MD5 verification failed! Data corruption detected"`
+
+### New Features (Phase 2)
+
+#### Order-Independent Decoding
+
+**What it does:** Pages can be scanned and decoded in any order - the system automatically reorders them correctly.
+
+**Why it matters:**
+- Accidentally dropped/shuffled printed pages? No problem!
+- Scan pages in any order you like
+- Pages are automatically sorted by their embedded page numbers
+
+**How it works:**
+1. Each QR code contains its page number in binary metadata
+2. System reads all QR codes from all pages
+3. Automatically sorts chunks by page number during reassembly
+4. Shows you which pages were detected and confirms if reordering happened
+
+**User Experience:**
+```
+Reading QR codes...
+Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+Scanning pages: [####################################] 100%
+Successfully decoded 12 QR codes from 3 PDF pages
+
+Analyzing decoded pages...
+Detected QR pages: [1, 2, 3]
+Pages were scanned out of order - reordering automatically...
+```
+
+#### Mixed Document Detection
+
+**What it does:** Immediately detects and stops if you accidentally scan pages from different QR code backups together.
+
+**Why it matters:**
+- Prevents accidentally mixing pages from `passwords.pdf` with pages from `keys.pdf`
+- Fails fast - stops scanning as soon as wrong page is detected
+- Shows exactly which page is wrong with clear error message
+
+**How it works:**
+1. First QR code establishes the "reference" MD5 hash
+2. Every subsequent QR code is checked against this reference
+3. If a different MD5 is found → immediate error with details
+4. Shows PDF page number and both MD5 hashes for comparison
+
+**User Experience (Error Case):**
+```
+Reading QR codes...
+Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+Scanning pages: [####################                ] 50%
+
+============================================================
+ERROR: PDF page 3 contains QR code from a different document!
+
+Expected MD5 (from QR page 1): 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+Found MD5 (QR page 1):       9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d
+
+This PDF contains pages from multiple QR code backups.
+Please ensure all PDF pages are from the same backup before decoding.
+============================================================
+```
+
+**Benefits:**
+- **Faster failure**: Don't waste time scanning all wrong pages
+- **Clear identification**: Shows exact PDF page number where problem was found
+- **Actionable**: Remove the wrong page and try again
+- **Debugging help**: Both MD5 hashes shown for comparison
 
 ### Output Examples
 
 #### Successful Encode
 ```
-Encoding: important_data.zip (2.4 MB)
-Compression: gzip (reduced to 1.8 MB)
-QR Configuration: Version 15, Error Correction M
-Pages required: 18
-Generating QR codes... [====================] 100%
-Writing PDF... done
-Output: important_data.zip.qr.pdf
+Encoding: /workspace/tests/test_data/random_5kb.bin
+Page: 215.9mm × 279.4mm (margin: 20.0mm, spacing: 5.0mm)
+QR Configuration: Version 18, Error Correction M
+QR Module Size: 0.9mm → Physical QR Size: 81.9mm
+Grid Layout: 2 rows × 2 columns = 4 QR codes per page
+Chunk size: 314 bytes per QR code
+Compressing with bzip2...
+  Original size: 5,120 bytes
+  Compressed size: 5,617 bytes (109.7%)
+QR codes required: 19
+PDF pages required: 5
+Generating QR codes...
+Creating QR codes  [####################################]  100%
+Writing PDF...
 
-Verification hash (SHA-256): a1b2c3d4...
+Output: random_5kb.bin.qr.pdf
+Verification hash (MD5): ea4ca35ea7c1f774621e2191fad85b4c
 Store this hash separately to verify successful recovery.
 ```
 
 #### Successful Decode
 ```
-Decoding: backup_scan.pdf
-Found 18 pages
-Reading QR codes... [====================] 100%
-18/18 pages successfully decoded
-Reassembling data... done
-Decompressing... done
-Verifying checksum... PASS
+Decoding: random_5kb.bin.qr.pdf
+Converting PDF to images...
+Found 5 pages
+Reading QR codes...
+Scanning pages  [####################################]  100%
+Successfully decoded 19 QR codes from 5 pages
+Reassembling data...
+Decompressing...
 
-Recovered: important_data.zip (2.4 MB)
-Verification hash: a1b2c3d4... [MATCH]
+Recovered: recovered.bin (5,120 bytes)
+Original file size: 5,120 bytes
+Verification: PASS (MD5: ea4ca35ea7c1f774621e2191fad85b4c)
 ```
 
-#### Partial Recovery
+#### Error: Mixed Documents
 ```
-Decoding: damaged_backup.pdf
-Found 18 pages
-Reading QR codes... [====================] 100%
-Warning: Page 7 - QR code 3 unreadable
-Warning: Page 12 - QR code 1 damaged (recovered via error correction)
-16/18 pages successfully decoded
+Decoding: mixed_pages.pdf
+Converting PDF to images...
+Found 10 pages
+Reading QR codes...
+Successfully decoded 38 QR codes from 10 pages
+Reassembling data...
 
-ERROR: Cannot fully reconstruct file (missing 2 QR codes)
-Use --recovery-mode to extract partial data (may be corrupted)
+Error: Mixed documents detected! Pages [15, 16, 17] have different MD5 hashes.
+All pages must be from the same backup file.
+```
+
+#### Error: Missing Pages
+```
+Decoding: incomplete.pdf
+Converting PDF to images...
+Found 4 pages
+Reading QR codes...
+Successfully decoded 15 QR codes from 4 pages
+Reassembling data...
+
+Error: Missing pages in sequence: [3, 5]. Found pages [1, 2, 4, 6].
+All pages from 1 to 6 must be present.
+Use --recovery-mode to attempt partial recovery
 ```
 
 ### Use Cases

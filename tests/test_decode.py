@@ -330,6 +330,264 @@ class TestErrorHandling:
             assert "compression" in str(e).lower()
 
 
+class TestOrderIndependentDecoding:
+    """Test order-independent decoding with binary format"""
+
+    def test_pages_in_correct_order(self):
+        """Test reassembly when pages are already in correct order"""
+        import hashlib
+        import bz2
+
+        # Create binary chunks for pages 1, 2, 3
+        original_data = b"test data for compression"
+        compressed_data = bz2.compress(original_data)
+        md5_hash = hashlib.md5(compressed_data).digest()
+        file_size = len(original_data)
+
+        chunks = []
+        chunk_size = len(compressed_data) // 3
+        for page_num in [1, 2, 3]:
+            chunk = bytearray()
+            chunk.extend(md5_hash)  # MD5 hash (16 bytes)
+            chunk.extend(page_num.to_bytes(2, 'big'))  # Page number (2 bytes)
+
+            if page_num == 1:
+                chunk.extend(file_size.to_bytes(4, 'big'))  # File size (4 bytes, only page 1)
+                data_start = 0
+            else:
+                data_start = chunk_size * (page_num - 1)
+
+            data_end = chunk_size * page_num if page_num < 3 else len(compressed_data)
+            chunk.extend(compressed_data[data_start:data_end])
+            chunks.append(bytes(chunk))
+
+        # Decode in order
+        file_data, report = qcb.reassemble_chunks(chunks, verify=True, recovery_mode=False)
+
+        # Should succeed
+        assert file_data == original_data
+        assert report['found_pages'] == 3
+
+    def test_pages_reversed(self):
+        """Test reassembly when pages are in reverse order (3, 2, 1)"""
+        import hashlib
+        import bz2
+
+        original_data = b"reverse order test data"
+        compressed_data = bz2.compress(original_data)
+        md5_hash = hashlib.md5(compressed_data).digest()
+        file_size = len(original_data)
+
+        chunks = []
+        chunk_size = len(compressed_data) // 3
+        for page_num in [1, 2, 3]:
+            chunk = bytearray()
+            chunk.extend(md5_hash)
+            chunk.extend(page_num.to_bytes(2, 'big'))
+
+            if page_num == 1:
+                chunk.extend(file_size.to_bytes(4, 'big'))
+                data_start = 0
+            else:
+                data_start = chunk_size * (page_num - 1)
+
+            data_end = chunk_size * page_num if page_num < 3 else len(compressed_data)
+            chunk.extend(compressed_data[data_start:data_end])
+            chunks.append(bytes(chunk))
+
+        # Reverse order
+        reversed_chunks = list(reversed(chunks))
+
+        # Should still reassemble correctly
+        file_data, report = qcb.reassemble_chunks(reversed_chunks, verify=True)
+
+        assert file_data == original_data
+        assert report['found_pages'] == 3
+
+    def test_pages_random_order(self):
+        """Test reassembly with randomly shuffled pages"""
+        import hashlib
+        import bz2
+
+        original_data = b"random order test with enough data for shuffling"
+        compressed_data = bz2.compress(original_data)
+        md5_hash = hashlib.md5(compressed_data).digest()
+        file_size = len(original_data)
+
+        chunks = []
+        chunk_size = len(compressed_data) // 5
+        for page_num in range(1, 6):  # 5 pages
+            chunk = bytearray()
+            chunk.extend(md5_hash)
+            chunk.extend(page_num.to_bytes(2, 'big'))
+
+            if page_num == 1:
+                chunk.extend(file_size.to_bytes(4, 'big'))
+                data_start = 0
+            else:
+                data_start = chunk_size * (page_num - 1)
+
+            data_end = chunk_size * page_num if page_num < 5 else len(compressed_data)
+            chunk.extend(compressed_data[data_start:data_end])
+            chunks.append(bytes(chunk))
+
+        # Shuffle: 3, 1, 5, 2, 4
+        shuffled = [chunks[2], chunks[0], chunks[4], chunks[1], chunks[3]]
+
+        # Should still work
+        file_data, report = qcb.reassemble_chunks(shuffled, verify=True)
+
+        assert file_data == original_data
+        assert report['found_pages'] == 5
+
+    def test_pages_interleaved(self):
+        """Test reassembly with interleaved order (1, 5, 2, 4, 3)"""
+        import hashlib
+        import bz2
+
+        original_data = b"interleaved test data for proper validation"
+        compressed_data = bz2.compress(original_data)
+        md5_hash = hashlib.md5(compressed_data).digest()
+        file_size = len(original_data)
+
+        chunks = []
+        chunk_size = len(compressed_data) // 5
+        for page_num in range(1, 6):
+            chunk = bytearray()
+            chunk.extend(md5_hash)
+            chunk.extend(page_num.to_bytes(2, 'big'))
+
+            if page_num == 1:
+                chunk.extend(file_size.to_bytes(4, 'big'))
+                data_start = 0
+            else:
+                data_start = chunk_size * (page_num - 1)
+
+            data_end = chunk_size * page_num if page_num < 5 else len(compressed_data)
+            chunk.extend(compressed_data[data_start:data_end])
+            chunks.append(bytes(chunk))
+
+        # Specific interleaved order
+        weird_order = [chunks[0], chunks[4], chunks[1], chunks[3], chunks[2]]
+
+        file_data, report = qcb.reassemble_chunks(weird_order, verify=True)
+
+        assert file_data == original_data
+        assert report['found_pages'] == 5
+
+
+class TestMixedDocumentDetection:
+    """Test detection of mixed documents with binary format"""
+
+    def test_same_document_all_chunks(self):
+        """Test that chunks from same document are accepted"""
+        import hashlib
+        import bz2
+
+        original_data = b"same document test data"
+        compressed_data = bz2.compress(original_data)
+        md5_hash = hashlib.md5(compressed_data).digest()
+        file_size = len(original_data)
+
+        chunks = []
+        chunk_size = len(compressed_data) // 3
+        for page_num in range(1, 4):
+            chunk = bytearray()
+            chunk.extend(md5_hash)  # Same MD5 for all
+            chunk.extend(page_num.to_bytes(2, 'big'))
+
+            if page_num == 1:
+                chunk.extend(file_size.to_bytes(4, 'big'))
+                data_start = 0
+            else:
+                data_start = chunk_size * (page_num - 1)
+
+            data_end = chunk_size * page_num if page_num < 3 else len(compressed_data)
+            chunk.extend(compressed_data[data_start:data_end])
+            chunks.append(bytes(chunk))
+
+        # Should succeed
+        file_data, report = qcb.reassemble_chunks(chunks, verify=True)
+
+        assert file_data == original_data
+        assert report['found_pages'] == 3
+
+    def test_mixed_documents_detected(self):
+        """Test that mixing chunks from different documents fails"""
+        import hashlib
+
+        # Two different documents with different MD5s
+        doc_a_data = b"document_a_compressed_data"
+        doc_b_data = b"document_b_compressed_data"
+        md5_a = hashlib.md5(doc_a_data).digest()
+        md5_b = hashlib.md5(doc_b_data).digest()
+
+        # Create chunks from doc A (pages 1-2)
+        chunks = []
+        for page_num in [1, 2]:
+            chunk = bytearray()
+            chunk.extend(md5_a)
+            chunk.extend(page_num.to_bytes(2, 'big'))
+
+            if page_num == 1:
+                chunk.extend((100).to_bytes(4, 'big'))
+
+            chunk.extend(f"doc_a_{page_num}".encode())
+            chunks.append(bytes(chunk))
+
+        # Add chunk from doc B (page 3)
+        chunk_b = bytearray()
+        chunk_b.extend(md5_b)  # Different MD5!
+        chunk_b.extend((3).to_bytes(2, 'big'))
+        chunk_b.extend(b"doc_b_3")
+        chunks.append(bytes(chunk_b))
+
+        # Should fail with mixed documents error
+        try:
+            qcb.reassemble_chunks(chunks, verify=True, recovery_mode=False)
+            assert False, "Should have raised ValueError for mixed documents"
+        except ValueError as e:
+            assert "Mixed documents detected" in str(e)
+
+    def test_duplicate_pages_detected(self):
+        """Test that duplicate page numbers are detected"""
+        import hashlib
+
+        compressed_data = b"dup_test_data_compressed"
+        md5_hash = hashlib.md5(compressed_data).digest()
+        file_size = 90
+
+        chunks = []
+        # Page 1
+        chunk1 = bytearray()
+        chunk1.extend(md5_hash)
+        chunk1.extend((1).to_bytes(2, 'big'))
+        chunk1.extend(file_size.to_bytes(4, 'big'))
+        chunk1.extend(b"page1")
+        chunks.append(bytes(chunk1))
+
+        # Page 2 (first)
+        chunk2a = bytearray()
+        chunk2a.extend(md5_hash)
+        chunk2a.extend((2).to_bytes(2, 'big'))
+        chunk2a.extend(b"page2a")
+        chunks.append(bytes(chunk2a))
+
+        # Page 2 (duplicate)
+        chunk2b = bytearray()
+        chunk2b.extend(md5_hash)
+        chunk2b.extend((2).to_bytes(2, 'big'))  # Duplicate!
+        chunk2b.extend(b"page2b")
+        chunks.append(bytes(chunk2b))
+
+        # Should fail with duplicate error
+        try:
+            qcb.reassemble_chunks(chunks, verify=True, recovery_mode=False)
+            assert False, "Should have raised ValueError for duplicates"
+        except ValueError as e:
+            assert "Duplicate" in str(e)
+
+
 if __name__ == '__main__':
     import pytest
     pytest.main([__file__, '-v'])

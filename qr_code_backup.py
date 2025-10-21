@@ -310,16 +310,23 @@ def calculate_chunk_size(qr_version: int, error_correction: str) -> int:
     return max(chunk_size, 100)  # Minimum 100 bytes per chunk
 
 
-def create_chunks(file_path: str, chunk_size: int, compression: str = 'gzip') -> List[Dict[str, Any]]:
-    """Split file into chunks with metadata.
+def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2') -> List[bytes]:
+    """Split file into chunks with binary metadata headers.
+
+    Binary format:
+    - All pages: [MD5 hash: 16 bytes][Page number: 2 bytes uint16][Data: variable]
+    - Page 1 adds: [File size: 4 bytes uint32] after page number
 
     Args:
         file_path: Path to file to encode
-        chunk_size: Size of each data chunk in bytes
+        chunk_size: Size of each data chunk in bytes (before metadata)
         compression: Compression algorithm to use
 
     Returns:
-        List of chunk dictionaries with metadata
+        List of binary chunks (each will be base64 encoded into QR codes)
+
+    Raises:
+        ValueError: If file size exceeds 2^32 bytes or page count exceeds 2^16
     """
     # Read entire file
     with open(file_path, 'rb') as f:
@@ -327,9 +334,13 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'gzip') ->
 
     file_name = os.path.basename(file_path)
     file_size = len(file_data)
-    file_checksum = calculate_checksum(file_data)
 
-    # Compress if requested
+    # Check file size limit (2^32 bytes = 4GB)
+    MAX_FILE_SIZE = 2**32
+    if file_size > MAX_FILE_SIZE:
+        raise ValueError(f"File size {file_size:,} bytes exceeds maximum of {MAX_FILE_SIZE:,} bytes (2^32)")
+
+    # Compress
     if compression != 'none':
         click.echo(f"Compressing with {compression}...")
         compressed_data = compress_data(file_data, compression)
@@ -339,40 +350,69 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'gzip') ->
     else:
         data_to_chunk = file_data
 
-    # Split into chunks
+    # Calculate MD5 hash of compressed data (will be in every page)
+    import hashlib
+    file_md5 = hashlib.md5(data_to_chunk).digest()  # 16 bytes binary
+
+    # Calculate total pages needed
+    # Page 1 has extra 4 bytes for file size, so adjust chunk size for first page
+    page1_data_size = chunk_size - 22  # MD5(16) + Page#(2) + FileSize(4)
+    other_page_data_size = chunk_size - 18  # MD5(16) + Page#(2)
+
+    if len(data_to_chunk) <= page1_data_size:
+        # Fits in one page
+        total_chunks = 1
+    else:
+        remaining = len(data_to_chunk) - page1_data_size
+        total_chunks = 1 + ((remaining + other_page_data_size - 1) // other_page_data_size)
+
+    # Check page count limit (2^16 pages = 65,536)
+    MAX_PAGES = 2**16
+    if total_chunks > MAX_PAGES:
+        raise ValueError(f"File requires {total_chunks:,} pages, exceeds maximum of {MAX_PAGES:,} pages (2^16)")
+
+    # Create chunks
     chunks = []
-    total_chunks = (len(data_to_chunk) + chunk_size - 1) // chunk_size
+    offset = 0
 
-    for i in range(total_chunks):
-        start = i * chunk_size
-        end = min(start + chunk_size, len(data_to_chunk))
-        chunk_data = data_to_chunk[start:end]
+    for page_num in range(1, total_chunks + 1):
+        # Determine chunk size for this page
+        if page_num == 1:
+            this_chunk_size = page1_data_size
+        else:
+            this_chunk_size = other_page_data_size
 
-        chunk_metadata = {
-            'format_version': FORMAT_VERSION,
-            'file_name': file_name,
-            'file_size': file_size,
-            'total_pages': total_chunks,
-            'page_number': i + 1,  # 1-indexed
-            'chunk_size': len(chunk_data),
-            'checksum_type': 'sha256',
-            'file_checksum': file_checksum,
-            'chunk_checksum': calculate_checksum(chunk_data),
-            'compression': compression,
-            'data': base64.b64encode(chunk_data).decode('ascii'),
-        }
+        # Extract data for this chunk
+        chunk_data = data_to_chunk[offset:offset + this_chunk_size]
+        offset += len(chunk_data)
 
-        chunks.append(chunk_metadata)
+        # Build binary chunk: [MD5][Page#][FileSize if page 1][Data]
+        chunk_binary = bytearray()
+
+        # MD5 hash (16 bytes)
+        chunk_binary.extend(file_md5)
+
+        # Page number (2 bytes, big-endian uint16)
+        chunk_binary.extend(page_num.to_bytes(2, byteorder='big'))
+
+        # File size (4 bytes, big-endian uint32) - only on page 1
+        if page_num == 1:
+            chunk_binary.extend(file_size.to_bytes(4, byteorder='big'))
+
+        # Data
+        chunk_binary.extend(chunk_data)
+
+        chunks.append(bytes(chunk_binary))
 
     return chunks
 
 
-def create_qr_code(data_dict: Dict[str, Any], qr_version: Optional[int],
+def create_qr_code(binary_data: bytes, qr_version: Optional[int],
                    error_correction: str, box_size: int = 10, border: int = 1) -> Image.Image:
-    """Generate QR code image from metadata dictionary.
+    """Generate QR code image from binary data.
 
     Args:
-        data_dict: Dictionary to encode
+        binary_data: Binary data to encode (will be base64 encoded)
         qr_version: QR code version (None for auto)
         error_correction: Error correction level
         box_size: Size of each QR code box in pixels
@@ -381,8 +421,8 @@ def create_qr_code(data_dict: Dict[str, Any], qr_version: Optional[int],
     Returns:
         PIL Image of QR code
     """
-    # Convert dict to JSON string
-    json_data = json.dumps(data_dict, separators=(',', ':'))
+    # Base64 encode binary data for QR code
+    b64_data = base64.b64encode(binary_data).decode('ascii')
 
     # Create QR code
     qr = qrcode.QRCode(
@@ -391,7 +431,7 @@ def create_qr_code(data_dict: Dict[str, Any], qr_version: Optional[int],
         box_size=box_size,
         border=border,
     )
-    qr.add_data(json_data)
+    qr.add_data(b64_data)
     qr.make(fit=True)
 
     # Create image
@@ -512,14 +552,14 @@ def pdf_to_images(pdf_path: str) -> List[np.ndarray]:
     return cv_images
 
 
-def decode_qr_codes_from_image(image: np.ndarray) -> List[str]:
+def decode_qr_codes_from_image(image: np.ndarray) -> List[bytes]:
     """Find and decode all QR codes in an image.
 
     Args:
         image: OpenCV image (numpy array)
 
     Returns:
-        List of decoded strings
+        List of binary chunks (base64 decoded)
     """
     # Convert to grayscale for better detection
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -529,96 +569,178 @@ def decode_qr_codes_from_image(image: np.ndarray) -> List[str]:
 
     results = []
     for obj in decoded_objects:
-        # Decode bytes to string
-        data = obj.data.decode('utf-8')
-        results.append(data)
+        # Decode base64 data to binary
+        try:
+            b64_string = obj.data.decode('utf-8')
+            binary_data = base64.b64decode(b64_string)
+            results.append(binary_data)
+        except Exception:
+            # Skip invalid QR codes
+            continue
 
     return results
 
 
-def parse_qr_data(qr_string: str) -> Optional[Dict[str, Any]]:
-    """Parse JSON metadata from QR code string.
+def parse_binary_chunk(chunk_binary: bytes) -> Optional[Dict[str, Any]]:
+    """Parse binary chunk header.
+
+    Binary format:
+    - All pages: [MD5: 16 bytes][Page#: 2 bytes uint16][Data: variable]
+    - Page 1 adds: [FileSize: 4 bytes uint32] after page#
 
     Args:
-        qr_string: Decoded QR code string
+        chunk_binary: Binary chunk data
 
     Returns:
-        Metadata dictionary or None if parsing fails
+        Dictionary with parsed metadata, or None if invalid
     """
     try:
-        data = json.loads(qr_string)
-        return data
-    except json.JSONDecodeError:
+        if len(chunk_binary) < 18:  # Minimum: MD5(16) + Page#(2)
+            return None
+
+        # Extract MD5 hash (16 bytes)
+        md5_hash = chunk_binary[:16]
+
+        # Extract page number (2 bytes, big-endian uint16)
+        page_num = int.from_bytes(chunk_binary[16:18], byteorder='big')
+
+        # Check if this is page 1 (has file size)
+        if page_num == 1:
+            if len(chunk_binary) < 22:  # MD5(16) + Page#(2) + FileSize(4)
+                return None
+            file_size = int.from_bytes(chunk_binary[18:22], byteorder='big')
+            data = chunk_binary[22:]
+        else:
+            file_size = None
+            data = chunk_binary[18:]
+
+        return {
+            'md5_hash': md5_hash,
+            'page_number': page_num,
+            'file_size': file_size,
+            'data': data
+        }
+    except Exception:
         return None
 
 
-def reassemble_chunks(chunks: List[Dict[str, Any]], verify: bool = True,
+def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                      recovery_mode: bool = False) -> Tuple[bytes, Dict[str, Any]]:
-    """Sort, validate, and reassemble chunks into original file.
+    """Sort, validate, and reassemble binary chunks into original file.
+
+    Validates:
+    - All chunks have the same MD5 hash (detects mixed documents)
+    - Page sequence is correct (1, 2, 3, ... N with no gaps or wrong order)
+    - Final decompressed data matches MD5 hash from chunks
 
     Args:
-        chunks: List of chunk metadata dictionaries
-        verify: Verify checksums if True
-        recovery_mode: Attempt recovery even with missing chunks
+        chunk_binaries: List of binary chunk data
+        verify: Verify MD5 consistency and sequence if True
+        recovery_mode: Attempt recovery even with missing chunks or errors
 
     Returns:
         Tuple of (file_data, report_dict)
 
     Raises:
-        ValueError: If chunks cannot be reassembled
+        ValueError: If chunks cannot be reassembled or validation fails
     """
-    if not chunks:
+    if not chunk_binaries:
         raise ValueError("No chunks provided")
 
-    # Get metadata from first chunk
-    first_chunk = chunks[0]
-    file_name = first_chunk['file_name']
-    file_size = first_chunk['file_size']
-    total_pages = first_chunk['total_pages']
-    compression = first_chunk['compression']
-    file_checksum = first_chunk['file_checksum']
+    # Parse all chunks
+    parsed_chunks = []
+    for i, chunk_binary in enumerate(chunk_binaries):
+        parsed = parse_binary_chunk(chunk_binary)
+        if parsed is None:
+            if not recovery_mode:
+                raise ValueError(f"Failed to parse chunk {i+1}")
+            continue
+        parsed_chunks.append(parsed)
+
+    if not parsed_chunks:
+        raise ValueError("No valid chunks found")
 
     # Sort by page number
-    chunks_sorted = sorted(chunks, key=lambda x: x['page_number'])
+    parsed_chunks.sort(key=lambda x: x['page_number'])
 
-    # Check for missing pages
-    page_numbers = [c['page_number'] for c in chunks_sorted]
-    expected_pages = set(range(1, total_pages + 1))
+    # Get reference MD5 from first chunk
+    reference_md5 = parsed_chunks[0]['md5_hash']
+
+    # Validate MD5 consistency across all pages
+    if verify:
+        md5_mismatches = []
+        for chunk in parsed_chunks:
+            if chunk['md5_hash'] != reference_md5:
+                md5_mismatches.append(chunk['page_number'])
+
+        if md5_mismatches:
+            raise ValueError(
+                f"Mixed documents detected! Pages {md5_mismatches} have different MD5 hashes. "
+                f"All pages must be from the same backup file."
+            )
+
+    # Get file size and total pages from page 1
+    page_1 = None
+    for chunk in parsed_chunks:
+        if chunk['page_number'] == 1:
+            page_1 = chunk
+            break
+
+    if page_1 is None:
+        raise ValueError("Page 1 not found - cannot determine file size")
+
+    file_size = page_1['file_size']
+
+    # Validate page sequence
+    page_numbers = [c['page_number'] for c in parsed_chunks]
+
+    # Check for duplicates
+    if len(page_numbers) != len(set(page_numbers)):
+        duplicates = [p for p in page_numbers if page_numbers.count(p) > 1]
+        raise ValueError(f"Duplicate pages detected: {list(set(duplicates))}")
+
+    # Determine expected total pages
+    max_page = max(page_numbers)
+    expected_pages = set(range(1, max_page + 1))
     actual_pages = set(page_numbers)
-    missing_pages = expected_pages - actual_pages
+    missing_pages = sorted(expected_pages - actual_pages)
 
     report = {
-        'total_pages': total_pages,
         'found_pages': len(actual_pages),
-        'missing_pages': sorted(missing_pages),
-        'checksum_failures': [],
+        'missing_pages': missing_pages,
+        'md5_hash': reference_md5.hex(),
+        'file_size': file_size,
     }
 
-    if missing_pages and not recovery_mode:
-        raise ValueError(f"Missing {len(missing_pages)} pages: {sorted(missing_pages)}")
+    # Check for missing pages in sequence
+    if verify and missing_pages and not recovery_mode:
+        raise ValueError(
+            f"Missing pages in sequence: {missing_pages}. "
+            f"Found pages {sorted(page_numbers)}. "
+            f"All pages from 1 to {max_page} must be present."
+        )
 
-    # Verify chunk checksums
-    if verify:
-        for chunk in chunks_sorted:
-            chunk_data = base64.b64decode(chunk['data'])
-            expected_checksum = chunk['chunk_checksum']
-            actual_checksum = calculate_checksum(chunk_data)
+    # Check for wrong page order - validate sequence is continuous from 1
+    if verify and not recovery_mode:
+        expected_sequence = list(range(1, len(parsed_chunks) + 1))
+        if missing_pages:
+            # Build expected sequence accounting for missing pages
+            expected_sequence = [p for p in range(1, max_page + 1) if p not in missing_pages]
 
-            if expected_checksum != actual_checksum:
-                report['checksum_failures'].append(chunk['page_number'])
+        if page_numbers != expected_sequence:
+            raise ValueError(
+                f"Pages out of sequence. Expected {expected_sequence[:10]}{'...' if len(expected_sequence) > 10 else ''}, "
+                f"got {page_numbers[:10]}{'...' if len(page_numbers) > 10 else ''}"
+            )
 
-    if report['checksum_failures'] and not recovery_mode:
-        raise ValueError(f"Chunk checksum failures on pages: {report['checksum_failures']}")
-
-    # Reassemble data
+    # Reassemble compressed data
     compressed_data = b''
-    for chunk in chunks_sorted:
-        chunk_data = base64.b64decode(chunk['data'])
-        compressed_data += chunk_data
+    for chunk in parsed_chunks:
+        compressed_data += chunk['data']
 
-    # Decompress
+    # Decompress (hardcoded bzip2)
     try:
-        file_data = decompress_data(compressed_data, compression)
+        file_data = decompress_data(compressed_data, 'bzip2')
     except Exception as e:
         if not recovery_mode:
             raise ValueError(f"Decompression failed: {e}")
@@ -626,17 +748,20 @@ def reassemble_chunks(chunks: List[Dict[str, Any]], verify: bool = True,
         file_data = compressed_data
         report['decompression_failed'] = True
 
-    # Verify file checksum
+    # Verify final file MD5 matches the MD5 in chunks
     if verify and 'decompression_failed' not in report:
-        actual_file_checksum = calculate_checksum(file_data)
-        if actual_file_checksum != file_checksum:
-            report['file_checksum_mismatch'] = True
-            if not recovery_mode:
-                raise ValueError("File checksum mismatch - data corrupted")
+        actual_md5 = hashlib.md5(compressed_data).digest()
+        if actual_md5 != reference_md5:
+            raise ValueError(
+                f"MD5 verification failed! "
+                f"Expected: {reference_md5.hex()}, "
+                f"Got: {actual_md5.hex()}. "
+                f"Data corruption detected."
+            )
+        report['md5_verified'] = True
 
-    report['file_name'] = file_name
-    report['file_size'] = file_size
-    report['compression'] = compression
+    report['recovered_size'] = len(file_data)
+    report['compression'] = 'bzip2'
 
     return file_data, report
 
@@ -724,9 +849,13 @@ def encode(input_file, output, error_correction, module_size,
         # Calculate chunk size
         chunk_size = calculate_chunk_size(optimal_version, error_correction)
 
-        # Create chunks
+        # Create chunks (returns list of binary data)
         click.echo(f"Chunk size: {chunk_size:,} bytes per QR code")
         chunks = create_chunks(input_file, chunk_size, compression)
+
+        # Extract MD5 from first chunk for display (first 16 bytes)
+        file_md5_binary = chunks[0][:16]
+        file_md5_hex = file_md5_binary.hex()
 
         # Calculate number of pages needed
         num_pages = (len(chunks) + qrs_per_page - 1) // qrs_per_page
@@ -737,8 +866,8 @@ def encode(input_file, output, error_correction, module_size,
         click.echo("Generating QR codes...")
         qr_images = []
         with click.progressbar(chunks, label='Creating QR codes') as bar:
-            for chunk in bar:
-                img = create_qr_code(chunk, optimal_version, error_correction)
+            for chunk_binary in bar:
+                img = create_qr_code(chunk_binary, optimal_version, error_correction)
                 qr_images.append(img)
 
         # Generate PDF
@@ -748,8 +877,7 @@ def encode(input_file, output, error_correction, module_size,
 
         # Display summary
         click.echo(f"\nOutput: {output}")
-        file_checksum = chunks[0]['file_checksum']
-        click.echo(f"Verification hash (SHA-256): {file_checksum}")
+        click.echo(f"Verification hash (MD5): {file_md5_hex}")
         click.echo(f"Store this hash separately to verify successful recovery.")
 
     except Exception as e:
@@ -759,8 +887,8 @@ def encode(input_file, output, error_correction, module_size,
 
 @cli.command()
 @click.argument('input_pdf', type=click.Path(exists=True))
-@click.option('-o', '--output', type=click.Path(), default=None,
-              help='Output file path (default: from metadata)')
+@click.option('-o', '--output', type=click.Path(), required=True,
+              help='Output file path (required)')
 @click.option('--verify', is_flag=True, default=True,
               help='Verify integrity using checksums [default: enabled]')
 @click.option('--recovery-mode', is_flag=True,
@@ -781,33 +909,74 @@ def decode(input_pdf, output, verify, recovery_mode, force):
         images = pdf_to_images(input_pdf)
         click.echo(f"Found {len(images)} pages")
 
-        # Decode QR codes from all pages
+        # Decode QR codes from all pages with MD5 validation (returns list of binary chunks)
         click.echo("Reading QR codes...")
-        all_chunks = []
+        all_chunk_binaries = []
         qr_count = 0
+        reference_md5 = None
+        reference_page_num = None
 
         with click.progressbar(images, label='Scanning pages') as bar:
-            for page_idx, image in enumerate(bar, 1):
-                qr_strings = decode_qr_codes_from_image(image)
+            for pdf_page_idx, image in enumerate(bar, 1):
+                chunk_binaries = decode_qr_codes_from_image(image)
 
-                for qr_str in qr_strings:
-                    chunk = parse_qr_data(qr_str)
-                    if chunk:
-                        all_chunks.append(chunk)
-                        qr_count += 1
+                for chunk_binary in chunk_binaries:
+                    # Parse to check MD5 (immediate mixed document detection)
+                    parsed = parse_binary_chunk(chunk_binary)
+
+                    if parsed is None:
+                        click.echo(f"\nWarning: PDF page {pdf_page_idx} - Failed to parse QR code", err=True)
+                        continue
+
+                    # Establish reference MD5 from first valid chunk
+                    if reference_md5 is None:
+                        reference_md5 = parsed['md5_hash']
+                        reference_page_num = parsed['page_number']
+                        click.echo(f"\nDocument MD5: {reference_md5.hex()}")
                     else:
-                        click.echo(f"\nWarning: Page {page_idx} - Failed to parse QR code", err=True)
+                        # Check MD5 consistency (detect mixed documents immediately)
+                        if parsed['md5_hash'] != reference_md5:
+                            raise click.ClickException(
+                                f"\n{'='*60}\n"
+                                f"ERROR: PDF page {pdf_page_idx} contains QR code from a different document!\n\n"
+                                f"Expected MD5 (from QR page {reference_page_num}): {reference_md5.hex()}\n"
+                                f"Found MD5 (QR page {parsed['page_number']}):       {parsed['md5_hash'].hex()}\n\n"
+                                f"This PDF contains pages from multiple QR code backups.\n"
+                                f"Please ensure all PDF pages are from the same backup before decoding.\n"
+                                f"{'='*60}"
+                            )
 
-        click.echo(f"Successfully decoded {qr_count} QR codes from {len(images)} pages")
+                    all_chunk_binaries.append(chunk_binary)
+                    qr_count += 1
 
-        if not all_chunks:
+        click.echo(f"Successfully decoded {qr_count} QR codes from {len(images)} PDF pages")
+
+        if not all_chunk_binaries:
             click.echo("Error: No valid QR codes found", err=True)
             sys.exit(1)
+
+        # Analyze page order (order-independent decoding feedback)
+        click.echo("\nAnalyzing decoded pages...")
+        parsed_for_analysis = []
+        for chunk_binary in all_chunk_binaries:
+            parsed = parse_binary_chunk(chunk_binary)
+            if parsed:
+                parsed_for_analysis.append(parsed)
+
+        if parsed_for_analysis:
+            page_numbers_sorted = sorted([p['page_number'] for p in parsed_for_analysis])
+            scan_order = [p['page_number'] for p in parsed_for_analysis]
+
+            click.echo(f"Detected QR pages: {page_numbers_sorted}")
+
+            # Check if pages were scanned out of order
+            if scan_order != page_numbers_sorted:
+                click.echo("Pages were scanned out of order - reordering automatically...")
 
         # Reassemble file
         click.echo("Reassembling data...")
         try:
-            file_data, report = reassemble_chunks(all_chunks, verify=verify,
+            file_data, report = reassemble_chunks(all_chunk_binaries, verify=verify,
                                                  recovery_mode=recovery_mode)
         except ValueError as e:
             click.echo(f"\nError: {e}", err=True)
@@ -815,36 +984,30 @@ def decode(input_pdf, output, verify, recovery_mode, force):
                 click.echo("Use --recovery-mode to attempt partial recovery", err=True)
             sys.exit(1)
 
-        # Determine output path
-        if output is None:
-            output = report['file_name']
-
         # Check if file exists
         if os.path.exists(output) and not force:
             click.echo(f"\nError: Output file '{output}' already exists. Use --force to overwrite.", err=True)
             sys.exit(1)
 
         # Write output
-        click.echo(f"Decompressing..." if report['compression'] != 'none' else "Writing output...")
+        click.echo(f"Decompressing..." if report['compression'] == 'bzip2' else "Writing output...")
         with open(output, 'wb') as f:
             f.write(file_data)
 
         # Display report
-        click.echo(f"\nRecovered: {output} ({len(file_data):,} bytes)")
+        click.echo(f"\nRecovered: {output} ({report['recovered_size']:,} bytes)")
+        click.echo(f"Original file size: {report['file_size']:,} bytes")
 
         if verify:
-            if report.get('file_checksum_mismatch'):
-                click.echo("Warning: File checksum MISMATCH - data may be corrupted!", err=True)
+            if report.get('md5_verified'):
+                click.echo(f"Verification: PASS (MD5: {report['md5_hash']})")
             elif report.get('decompression_failed'):
                 click.echo("Warning: Decompression failed - output may be corrupted!", err=True)
             else:
-                click.echo("Verification: PASS (checksum matches)")
+                click.echo("Verification: Skipped")
 
         if report['missing_pages']:
             click.echo(f"Warning: Missing {len(report['missing_pages'])} pages: {report['missing_pages']}", err=True)
-
-        if report['checksum_failures']:
-            click.echo(f"Warning: Checksum failures on pages: {report['checksum_failures']}", err=True)
 
     except Exception as e:
         click.echo(f"\nError: {e}", err=True)
@@ -870,32 +1033,37 @@ def info(pdf_file):
             click.echo("Error: No pages found in PDF", err=True)
             sys.exit(1)
 
-        # Decode QR codes from first page
-        qr_strings = decode_qr_codes_from_image(images[0])
+        # Decode QR codes from first page (returns binary chunks)
+        chunk_binaries = decode_qr_codes_from_image(images[0])
 
-        if not qr_strings:
+        if not chunk_binaries:
             click.echo("Error: No QR codes found on first page", err=True)
             sys.exit(1)
 
-        # Parse first QR code
-        metadata = parse_qr_data(qr_strings[0])
+        # Parse first QR code (should be page 1)
+        metadata = parse_binary_chunk(chunk_binaries[0])
 
         if not metadata:
             click.echo("Error: Failed to parse QR code metadata", err=True)
             sys.exit(1)
 
+        # Count total QR codes across all pages
+        total_qr_codes = 0
+        for image in images:
+            qr_binaries = decode_qr_codes_from_image(image)
+            total_qr_codes += len(qr_binaries)
+
         # Display metadata
         click.echo(f"\n{'='*60}")
         click.echo("QR CODE BACKUP METADATA")
         click.echo(f"{'='*60}")
-        click.echo(f"Format Version:      {metadata.get('format_version', 'N/A')}")
-        click.echo(f"Original Filename:   {metadata.get('file_name', 'N/A')}")
-        click.echo(f"Original File Size:  {metadata.get('file_size', 0):,} bytes")
-        click.echo(f"Total Pages:         {metadata.get('total_pages', 'N/A')}")
-        click.echo(f"Compression:         {metadata.get('compression', 'N/A')}")
-        click.echo(f"Checksum Type:       {metadata.get('checksum_type', 'N/A')}")
-        click.echo(f"File Checksum:       {metadata.get('file_checksum', 'N/A')}")
-        click.echo(f"QR Codes per Page:   ~{len(qr_strings)}")
+        click.echo(f"Format Version:      Binary v1.0")
+        click.echo(f"Original File Size:  {metadata.get('file_size', 'N/A'):,} bytes" if metadata.get('file_size') else "Original File Size:  N/A (not page 1)")
+        click.echo(f"MD5 Hash:            {metadata['md5_hash'].hex()}")
+        click.echo(f"Page Number:         {metadata['page_number']}")
+        click.echo(f"Compression:         bzip2")
+        click.echo(f"QR Codes per Page:   ~{len(chunk_binaries)}")
+        click.echo(f"Total QR Codes:      {total_qr_codes}")
         click.echo(f"PDF Pages:           {len(images)}")
         click.echo(f"{'='*60}\n")
 

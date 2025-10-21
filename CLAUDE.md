@@ -147,32 +147,51 @@ x = margin + horizontal_offset + col * (qr_size + spacing)
 
 ## Data Format
 
-Each QR code contains a JSON structure:
+### Binary Metadata Structure (v1.0)
 
-```json
-{
-  "format_version": "1.0",
-  "file_name": "original.bin",
-  "file_size": 25600,
-  "total_pages": 37,
-  "page_number": 1,
-  "chunk_size": 314,
-  "checksum_type": "sha256",
-  "file_checksum": "abc123...",
-  "chunk_checksum": "def456...",
-  "compression": "bzip2",
-  "data": "<base64_encoded_chunk>"
-}
+Each QR code contains **binary metadata** followed by data (entire chunk is base64 encoded into QR):
+
+**Page 1 Format:**
+```
+[MD5 Hash: 16 bytes][Page Number: 2 bytes uint16][File Size: 4 bytes uint32][Data: variable]
 ```
 
-**Critical Fields:**
-- `page_number`: 1-indexed, used for reassembly
-- `total_pages`: Allows detection of missing pages
-- `file_checksum`: SHA-256 of original uncompressed file
-- `chunk_checksum`: SHA-256 of this chunk's data (before base64)
-- `data`: Base64-encoded compressed chunk
+**Other Pages Format:**
+```
+[MD5 Hash: 16 bytes][Page Number: 2 bytes uint16][Data: variable]
+```
 
-**Metadata Overhead:** ~300 bytes per QR code (accounted for in `calculate_chunk_size`)
+**Field Details:**
+- **MD5 Hash** (16 bytes binary): Hash of the **entire compressed file**
+  - Same on every page for validation
+  - Detects mixed documents (different MD5 = different file)
+  - Verifies data integrity after reassembly
+
+- **Page Number** (2 bytes, big-endian uint16): 1-indexed page number
+  - Range: 1 to 65,536 (2^16 limit)
+  - Used for sequence validation and reassembly
+
+- **File Size** (4 bytes, big-endian uint32, **page 1 only**):
+  - Original uncompressed file size
+  - Range: 0 to 4,294,967,296 bytes (2^32 = 4GB limit)
+  - Not present on pages 2+
+
+- **Data** (variable): Chunk of compressed file data
+
+**Validation Features:**
+- **MD5 Consistency Check**: All pages must have identical MD5 hash
+- **Page Sequence Validation**: Pages must be 1, 2, 3, ... N (no gaps, no duplicates, no wrong order)
+- **Mixed Document Detection**: If different MD5 found → error (scanned wrong pages)
+- **Final Verification**: MD5 of reassembled compressed data must match page MD5
+
+**Metadata Overhead:**
+- Page 1: 22 bytes (MD5 + Page# + FileSize)
+- Other pages: 18 bytes (MD5 + Page#)
+- Plus ~33% for base64 encoding
+
+**Limits:**
+- Maximum file size: 2^32 bytes (4GB)
+- Maximum pages: 2^16 (65,536 pages)
 
 ---
 
@@ -459,7 +478,7 @@ Displays metadata without decoding.
 ## Code Structure
 
 ```
-qr_code_backup.py (main file, 760+ lines)
+qr_code_backup.py (main file, 1000+ lines)
 ├── Imports & Constants
 ├── Utility Functions
 │   ├── calculate_checksum()
@@ -471,19 +490,302 @@ qr_code_backup.py (main file, 760+ lines)
 ├── Encoding Functions
 │   ├── get_qr_capacity()
 │   ├── calculate_chunk_size()
-│   ├── create_chunks()
-│   ├── create_qr_code()
+│   ├── create_chunks() ← Creates binary format chunks
+│   ├── create_qr_code() ← Accepts binary data
 │   └── generate_pdf()
 ├── Decoding Functions
 │   ├── pdf_to_images()
-│   ├── decode_qr_codes_from_image()
-│   ├── parse_qr_data()
-│   └── reassemble_chunks()
+│   ├── decode_qr_codes_from_image() ← Returns binary chunks
+│   ├── parse_binary_chunk() ← Parses binary metadata
+│   └── reassemble_chunks() ← Validates MD5 & sequence
 └── CLI Commands
     ├── encode()
-    ├── decode()
+    ├── decode() ← Requires -o output path
     └── info()
 ```
+
+**Key Changes in v1.0:**
+- `create_chunks()`: Now produces binary format with MD5, page#, file size
+- `parse_binary_chunk()`: Replaces `parse_qr_data()`, parses binary format
+- `reassemble_chunks()`: Now validates MD5 consistency and page sequence
+- `decode` command: Output path `-o` is now required (no filename in metadata)
+
+---
+
+## Error Handling & Validation
+
+### Encoding Validation
+
+**File Size Limit Check:**
+```python
+if file_size > 2**32:
+    raise ValueError("File size exceeds maximum of 4GB (2^32 bytes)")
+```
+
+**Page Count Limit Check:**
+```python
+if total_chunks > 2**16:
+    raise ValueError("File requires too many pages, exceeds 2^16 limit")
+```
+
+### Decoding Validation
+
+**1. MD5 Consistency Check**
+- All pages must have **identical MD5 hash**
+- Detects mixed documents (accidentally scanning pages from different backups)
+- Error message: `"Mixed documents detected! Pages [X, Y] have different MD5 hashes"`
+
+**2. Page Sequence Validation**
+- Pages must be numbered 1, 2, 3, ... N with **no gaps**
+- Error message: `"Missing pages in sequence: [3, 7]. All pages from 1 to N must be present"`
+
+**3. Duplicate Page Detection**
+- No duplicate page numbers allowed
+- Error message: `"Duplicate pages detected: [2, 5]"`
+
+**4. Page 1 Required**
+- Page 1 must be present (contains file size)
+- Error message: `"Page 1 not found - cannot determine file size"`
+
+**5. Final MD5 Verification**
+- After reassembly, compute MD5 of compressed data
+- Must match the MD5 from all page headers
+- Error message: `"MD5 verification failed! Expected: XXX, Got: YYY. Data corruption detected."`
+
+### Recovery Mode
+
+When `--recovery-mode` is enabled:
+- Skips MD5 consistency check
+- Allows missing pages (reassembles available pages)
+- Continues even if final verification fails
+- Use case: Attempting to recover from damaged backup
+
+**Default:** Recovery mode OFF (strict validation)
+
+---
+
+## Phase 2 Features: Order-Independent Decoding & Mixed Document Detection
+
+### Feature 1: Order-Independent Decoding
+
+**Problem Solved:** Users may accidentally drop printed pages, scan in wrong order, or have pages shuffled.
+
+**Solution:** Pages can now be scanned/decoded in any order - the system automatically reorders them using page numbers embedded in binary metadata.
+
+**Implementation Details:**
+
+1. **Existing Foundation:** `reassemble_chunks()` already sorts chunks by page number before reassembly, so out-of-order pages were already handled internally.
+
+2. **User Feedback Enhancement:** Added immediate feedback during decode to show:
+   - Document MD5 hash (after first QR code decoded)
+   - Detected page numbers in sorted order
+   - Warning message if pages were scanned out of order
+   - Automatic reordering confirmation
+
+3. **decode() Command Enhancements** (qr_code_backup.py:912-974):
+   ```python
+   # During QR scanning loop
+   reference_md5 = None
+   for pdf_page_idx, image in enumerate(images, 1):
+       for chunk_binary in decode_qr_codes_from_image(image):
+           parsed = parse_binary_chunk(chunk_binary)
+
+           # Establish reference MD5 from first valid chunk
+           if reference_md5 is None:
+               reference_md5 = parsed['md5_hash']
+               click.echo(f"\nDocument MD5: {reference_md5.hex()}")
+
+           # (Mixed document detection - see below)
+
+   # After all pages scanned, analyze page order
+   page_numbers_sorted = sorted([p['page_number'] for p in parsed_for_analysis])
+   scan_order = [p['page_number'] for p in parsed_for_analysis]
+
+   if scan_order != page_numbers_sorted:
+       click.echo("Pages were scanned out of order - reordering automatically...")
+   ```
+
+**Test Coverage:**
+- Unit tests: 4 tests in `test_decode.py::TestOrderIndependentDecoding`
+  - Pages in correct order (baseline)
+  - Pages in reverse order
+  - Pages in random order
+  - Pages in specific interleaved pattern
+- Integration tests: 3 tests in `test_order_independence.py`
+  - Reversed PDF pages (full encode-decode cycle)
+  - Shuffled PDF pages
+  - Interleaved scan simulation (odd pages, then even pages)
+- Combined tests: 2 tests in `test_combined_features.py`
+  - Shuffled single document (should succeed)
+  - Complex reordering of large document
+
+**User Experience:**
+```
+Reading QR codes...
+Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+Scanning pages: [####] 100%
+Successfully decoded 12 QR codes from 3 PDF pages
+
+Analyzing decoded pages...
+Detected QR pages: [1, 2, 3]
+Pages were scanned out of order - reordering automatically...
+```
+
+### Feature 2: Mixed Document Detection
+
+**Problem Solved:** Users might accidentally scan pages from different backups into one PDF (e.g., mixing pages from `passwords.pdf` backup with pages from `keys.pdf` backup).
+
+**Solution:** Immediate detection when a page from a different document is encountered during scanning - fails fast instead of wasting time scanning remaining pages.
+
+**Implementation Details:**
+
+1. **MD5 Reference Validation:** During decode loop, establish reference MD5 from first valid QR code, then compare every subsequent QR code's MD5 against it.
+
+2. **Immediate Error on Mismatch:**
+   ```python
+   # In decode() command loop
+   if reference_md5 is None:
+       reference_md5 = parsed['md5_hash']
+       reference_page_num = parsed['page_number']
+       click.echo(f"\nDocument MD5: {reference_md5.hex()}")
+   else:
+       # Check MD5 consistency (detect mixed documents immediately)
+       if parsed['md5_hash'] != reference_md5:
+           raise click.ClickException(
+               f"\n{'='*60}\n"
+               f"ERROR: PDF page {pdf_page_idx} contains QR code from a different document!\n\n"
+               f"Expected MD5 (from QR page {reference_page_num}): {reference_md5.hex()}\n"
+               f"Found MD5 (QR page {parsed['page_number']}):       {parsed['md5_hash'].hex()}\n\n"
+               f"This PDF contains pages from multiple QR code backups.\n"
+               f"Please ensure all PDF pages are from the same backup before decoding.\n"
+               f"{'='*60}"
+           )
+   ```
+
+3. **Error Message Design:**
+   - Shows PDF page number where mismatch was found
+   - Shows both MD5 hashes for comparison
+   - Shows which QR page numbers are in conflict
+   - Provides clear actionable guidance
+
+**Test Coverage:**
+- Unit tests: 3 tests in `test_decode.py::TestMixedDocumentDetection`
+  - Same document all chunks (should succeed)
+  - Mixed documents detected (should fail)
+  - Duplicate pages detected
+- Integration tests: 3 tests in `test_mixed_documents.py`
+  - Merged PDFs from two different files
+  - Interleaved pages from different backups
+  - Single wrong page among many correct pages
+- Combined tests: 1 test in `test_combined_features.py`
+  - Shuffled mixed documents (detects mix even when shuffled)
+
+**User Experience (Error Case):**
+```
+Reading QR codes...
+Document MD5: 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+Scanning pages: [##--] 50%
+
+============================================================
+ERROR: PDF page 3 contains QR code from a different document!
+
+Expected MD5 (from QR page 1): 3f7a8b2c1d4e5f6a7b8c9d0e1f2a3b4c
+Found MD5 (QR page 1):       9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d
+
+This PDF contains pages from multiple QR code backups.
+Please ensure all PDF pages are from the same backup before decoding.
+============================================================
+```
+
+**Why Immediate Detection Matters:**
+- Fails fast - don't waste time scanning remaining pages
+- Clear error with specific page numbers - user can immediately identify the problem
+- Shows both MD5 hashes - helps debug if user has multiple backups
+- PDF page number + QR page number - easier to locate the wrong physical page
+
+### Testing Infrastructure (PDF Helpers)
+
+Created `tests/pdf_helpers.py` with utilities for testing various page order scenarios:
+
+**Functions:**
+- `reverse_pdf_pages(input_pdf, output_pdf)` - Reverse page order
+- `shuffle_pdf_pages(input_pdf, output_pdf, page_order)` - Reorder pages by index list
+- `merge_pdfs(pdf_list, output_pdf)` - Merge multiple PDFs
+- `extract_pdf_pages(input_pdf, output_pdf, page_numbers)` - Extract specific pages
+- `get_pdf_page_count(pdf_path)` - Count pages
+- `interleave_pdfs(pdf1, pdf2, output_pdf)` - Interleave two PDFs (A1, B1, A2, B2, ...)
+
+**Dependencies:** pypdf (already in requirements.txt)
+
+**Usage Example:**
+```python
+# Test reversed pages
+reverse_pdf_pages('backup.pdf', 'reversed.pdf')
+# Test shuffled pages
+shuffle_pdf_pages('backup.pdf', 'shuffled.pdf', [2, 0, 1])
+```
+
+### Test Summary
+
+**Total Tests Added:** 17 tests (all passing)
+- Unit tests: 7 (4 order-independent + 3 mixed document)
+- Integration tests: 6 (3 order-independent + 3 mixed document)
+- Combined feature tests: 4
+
+**Test Data Strategy:**
+- Small repeating text: Quick tests, compresses well
+- Large repeating text: Multiple pages, tests pagination
+- Random binary data (5KB): Doesn't compress, ensures many pages for gap detection
+
+**Example Test Pattern:**
+```python
+# 1. Create test file
+# 2. Encode with create_chunks() + create_qr_code() + generate_pdf()
+# 3. Manipulate PDF pages (reverse/shuffle/merge)
+# 4. Decode and validate
+# 5. Verify recovered file matches original (filecmp.cmp)
+```
+
+### Code Changes Summary
+
+**Modified Files:**
+1. `qr_code_backup.py` - Lines 912-974 (decode command)
+   - Added immediate MD5 validation loop
+   - Added order-independent feedback messages
+   - Added page order analysis
+
+**New Test Files:**
+1. `tests/pdf_helpers.py` - PDF manipulation utilities
+2. `tests/test_order_independence.py` - Integration tests for order-independent decoding
+3. `tests/test_mixed_documents.py` - Integration tests for mixed document detection
+4. `tests/test_combined_features.py` - Combined feature tests
+
+**Modified Test Files:**
+1. `tests/test_decode.py` - Added 2 new test classes (7 tests total)
+
+### Design Decisions
+
+1. **Why check MD5 during decode loop instead of in reassemble_chunks()?**
+   - Fails faster - don't waste time scanning wrong pages
+   - Better error messages with PDF page numbers
+   - User can immediately stop and fix the problem
+
+2. **Why show "reordering automatically" message?**
+   - Transparency - user knows pages were out of order
+   - Confidence - user knows system handled it correctly
+   - Troubleshooting - helps diagnose scanning workflow issues
+
+3. **Why separate integration test files?**
+   - Clearer test organization
+   - Easier to run specific test suites
+   - Better test file naming (describes what's being tested)
+
+### Future Enhancements (Not Implemented)
+
+These features work well with what's planned for Phase 2:
+
+- **Encryption** (Weeks 2-3): Order-independence and mixed doc detection still work because MD5 is of compressed+encrypted data
+- **Parity Pages** (Weeks 4-6): Combined with order-independence allows partial recovery even with missing/shuffled pages
 
 ---
 
