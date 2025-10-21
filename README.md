@@ -43,8 +43,9 @@ brew install zbar poppler
 ```
 
 **Windows:**
-- Download zbar from http://zbar.sourceforge.net/
-- Download poppler from https://github.com/oschwartz10612/poppler-windows/releases
+```bash
+choco install zbar poppler
+```
 
 ### Python Dependencies
 
