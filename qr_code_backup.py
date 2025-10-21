@@ -1479,34 +1479,15 @@ def cli():
               help='Output PDF path (default: <input_file>.qr.pdf)')
 @click.option('--error-correction', type=click.Choice(['L', 'M', 'Q', 'H']), default='M',
               help='Error correction level: L(7%), M(15%), Q(25%), H(30%) [default: M]')
-@click.option('--module-size', type=float, default=0.9,
-              help='QR module size in millimeters [default: 0.9]')
-@click.option('--page-width', type=float, default=215.9,
-              help='Page width in millimeters [default: 215.9 (US Letter)]')
-@click.option('--page-height', type=float, default=279.4,
-              help='Page height in millimeters [default: 279.4 (US Letter)]')
-@click.option('--margin', type=float, default=20.0,
-              help='Page margin in millimeters [default: 20]')
-@click.option('--spacing', type=float, default=5.0,
-              help='Spacing between QR codes in millimeters [default: 5]')
+@click.option('--density', type=float, default=0.9,
+              help='QR code density in mm (smaller = denser). [default: 0.9]')
 @click.option('--title', type=str, default=None,
               help='Title for page headers (default: filename)')
-@click.option('--no-header', is_flag=True,
-              help='Disable header text on pages')
 @click.option('--encrypt', is_flag=True,
               help='Encrypt the data before encoding (prompts for password)')
-@click.option('--argon2-time', type=int, default=3,
-              help='Argon2 time cost parameter [default: 3]')
-@click.option('--argon2-memory', type=int, default=65536,
-              help='Argon2 memory cost in KiB [default: 65536 (64MB)]')
-@click.option('--argon2-parallelism', type=int, default=4,
-              help='Argon2 parallelism parameter [default: 4]')
 @click.option('--parity-percent', type=float, default=5.0,
               help='Parity percentage for recovery (0-100). Default 5.0 = 5%% overhead. Set to 0 to disable.')
-def encode(input_file, output, error_correction, module_size,
-           page_width, page_height, margin, spacing, title, no_header,
-           encrypt, argon2_time, argon2_memory, argon2_parallelism,
-           parity_percent):
+def encode(input_file, output, error_correction, density, title, encrypt, parity_percent):
     """Encode a file into a QR code backup PDF.
 
     Example:
@@ -1514,20 +1495,28 @@ def encode(input_file, output, error_correction, module_size,
         qr_code_backup encode secret.txt -o backup.pdf --encrypt
     """
     try:
-        # Hardcode compression to bzip2
+        # Hardcoded defaults (opinionated choices like tar)
         compression = 'bzip2'
+        page_width = 215.9  # US Letter
+        page_height = 279.4
+        margin = 20.0
+        spacing = 5.0
+        header_height = 40.0
+        argon2_time = 3
+        argon2_memory = 65536  # 64MB
+        argon2_parallelism = 4
 
         # Handle encryption password
         password = None
         if encrypt:
             password = click.prompt('Enter encryption password', hide_input=True, confirmation_prompt=True)
-            click.echo(f"Encryption: AES-256-GCM with Argon2id (time={argon2_time}, memory={argon2_memory}KiB, parallelism={argon2_parallelism})")
+            click.echo(f"Encryption: AES-256-GCM with Argon2id")
 
-        # Validate module size and warn if too small
-        if module_size < 0.8:
-            click.echo(f"\nWARNING: Module size {module_size}mm is below recommended minimum (0.8mm).", err=True)
+        # Validate density and warn if too small
+        if density < 0.8:
+            click.echo(f"\nWARNING: Density {density}mm is below recommended minimum (0.8mm).", err=True)
             click.echo(f"         This density risks data loss when printed and scanned.", err=True)
-            click.echo(f"         Consider using --module-size 1.2 or higher for reliable results.\n", err=True)
+            click.echo(f"         Consider using --density 1.2 or higher for reliable results.\n", err=True)
 
         # Set defaults
         if output is None:
@@ -1536,14 +1525,13 @@ def encode(input_file, output, error_correction, module_size,
             title = os.path.basename(input_file)
 
         # Auto-calculate optimal QR version for 2x2 grid (4 codes per page)
-        header_height = 40.0 if not no_header else 0.0
         optimal_version = calculate_optimal_qr_version(
-            module_size, page_width, page_height, margin, spacing, header_height,
+            density, page_width, page_height, margin, spacing, header_height,
             min_qr_codes_per_page=4
         )
 
         # Calculate QR code physical size
-        qr_physical_size = calculate_qr_physical_size(optimal_version, module_size)
+        qr_physical_size = calculate_qr_physical_size(optimal_version, density)
 
         # Calculate grid layout
         rows, cols = calculate_grid_layout(page_width, page_height, qr_physical_size,
@@ -1554,9 +1542,7 @@ def encode(input_file, output, error_correction, module_size,
         click.echo(f"\nEncoding: {input_file}")
         if encrypt:
             click.echo(f"Encryption: Enabled (AES-256-GCM)")
-        click.echo(f"Page: {page_width}mm × {page_height}mm (margin: {margin}mm, spacing: {spacing}mm)")
-        click.echo(f"QR Configuration: Version {optimal_version}, Error Correction {error_correction}")
-        click.echo(f"QR Module Size: {module_size}mm → Physical QR Size: {qr_physical_size:.1f}mm")
+        click.echo(f"QR Configuration: Version {optimal_version}, Error Correction {error_correction}, Density {density}mm")
         click.echo(f"Grid Layout: {rows} rows × {cols} columns = {qrs_per_page} QR codes per page")
 
         # Calculate chunk size
@@ -1598,7 +1584,7 @@ def encode(input_file, output, error_correction, module_size,
         # Generate PDF
         click.echo("Writing PDF...")
         generate_pdf(qr_images, output, title, page_width, page_height,
-                    margin, spacing, (rows, cols), qr_physical_size, no_header, len(chunks),
+                    margin, spacing, (rows, cols), qr_physical_size, False, len(chunks),
                     chunks=chunks)
 
         # Display summary

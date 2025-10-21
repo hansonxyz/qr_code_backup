@@ -131,9 +131,9 @@ x = margin + horizontal_offset + col * (qr_size + spacing)
 
 **Rationale:**
 - More common in US
-- Configurable via `--page-width` and `--page-height`
+- Hardcoded at 215.9mm × 279.4mm (opinionated default)
 
-### Header Height: 40mm (when enabled)
+### Header Height: 40mm
 
 **Contents:**
 - Title (filename or custom)
@@ -141,7 +141,7 @@ x = margin + horizontal_offset + col * (qr_size + spacing)
 - Decode instructions
 - Horizontal line separator
 
-**Configurable:** `--no-header` flag to disable
+**Note:** Always enabled (opinionated default)
 
 ---
 
@@ -432,7 +432,7 @@ brew install poppler
 3. Paper quality issues
 4. Printer alignment/quality issues
 
-**Solution:** Use larger module size (`--module-size 1.2`)
+**Solution:** Use larger density (`--density 1.2`)
 
 ### Issue: File larger after compression
 
@@ -473,15 +473,12 @@ brew install poppler
 python qr_code_backup.py encode <file> [OPTIONS]
 
 Options:
-  -o, --output PATH          Output PDF path
+  -o, --output PATH          Output PDF path [default: <input>.qr.pdf]
   --error-correction L|M|Q|H Error correction level [default: M]
-  --module-size FLOAT        QR module size in mm [default: 0.9]
-  --page-width FLOAT         Page width in mm [default: 215.9]
-  --page-height FLOAT        Page height in mm [default: 279.4]
-  --margin FLOAT             Page margin in mm [default: 20]
-  --spacing FLOAT            QR code spacing in mm [default: 5]
-  --title TEXT               Custom title for headers
-  --no-header                Disable page headers
+  --density FLOAT            QR code density in mm (smaller = denser) [default: 0.9]
+  --title TEXT               Custom title for headers [default: filename]
+  --encrypt                  Enable encryption (prompts for password)
+  --parity-percent FLOAT     Parity percentage (0-100) [default: 5.0]
 ```
 
 ### Decode Command
@@ -947,7 +944,7 @@ shuffle_pdf_pages('backup.pdf', 'shuffled.pdf', [2, 0, 1])
    - **Encode command** (qr_code_backup.py:1087-1213):
      - `--encrypt` flag to enable encryption
      - Interactive password prompt with confirmation
-     - `--argon2-time`, `--argon2-memory`, `--argon2-parallelism` options
+     - Argon2 parameters hardcoded at secure defaults (time=3, memory=65536, parallelism=4)
    - **Decode command** (qr_code_backup.py:1215-1356):
      - `--password` option (optional, prompts if encrypted and not provided)
      - Auto-detects encryption from first chunk

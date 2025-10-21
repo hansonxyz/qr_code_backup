@@ -128,19 +128,11 @@ python qr_code_backup.py encode <input_file> [OPTIONS]
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-o, --output <path>` | Output PDF file path | `<input_file>.qr.pdf` |
-| `--encrypt` | Enable encryption (prompts for password) | disabled |
-| `--argon2-time <n>` | Argon2 time cost parameter | 3 |
-| `--argon2-memory <kb>` | Argon2 memory cost in KiB | 65536 (64MB) |
-| `--argon2-parallelism <n>` | Argon2 parallelism parameter | 4 |
-| `--parity-percent <n>` | Parity percentage (0-100). Default 5.0 = 5% overhead. Set to 0 to disable. | 5.0 (always enabled) |
 | `--error-correction <level>` | Error correction: L(7%), M(15%), Q(25%), H(30%) | M (15%) |
-| `--module-size <mm>` | QR module size in millimeters | 0.9 |
-| `--page-width <mm>` | Page width in millimeters | 215.9 (Letter) |
-| `--page-height <mm>` | Page height in millimeters | 279.4 (Letter) |
-| `--margin <mm>` | Page margin in millimeters | 20 |
-| `--spacing <mm>` | Spacing between QR codes | 5 |
+| `--density <mm>` | QR code density in mm (smaller = denser) | 0.9 |
 | `--title <text>` | Title for page headers | filename |
-| `--no-header` | Disable header text on pages | false |
+| `--encrypt` | Enable encryption (prompts for password) | disabled |
+| `--parity-percent <n>` | Parity percentage (0-100). Set to 0 to disable. | 5.0 (always enabled) |
 
 **Examples:**
 
@@ -154,11 +146,11 @@ python qr_code_backup.py encode passwords.txt --encrypt
 # Maximum error correction for long-term storage
 python qr_code_backup.py encode important.txt --error-correction H
 
-# Encrypted with custom Argon2 parameters (slower but more secure)
-python qr_code_backup.py encode keys.txt --encrypt --argon2-time 5 --argon2-memory 131072
-
 # Custom title
 python qr_code_backup.py encode data.txt --title "Backup 2024-01-15"
+
+# Adjust density (smaller = more data per page, harder to scan)
+python qr_code_backup.py encode large_file.bin --density 0.7
 
 # Parity is enabled by default (5% overhead, ~1 page per 20 data pages)
 python qr_code_backup.py encode important.txt
@@ -335,17 +327,6 @@ python qr_code_backup.py decode backup.pdf -o recovered.txt
 - Wrong password detected immediately - no wasted time on decryption
 - Authenticated encryption (GCM) - tampering is detected automatically
 - Memory-hard KDF - protects against brute-force attacks
-- Tunable Argon2 parameters for security/performance trade-off
-
-**Argon2 Tuning:**
-```bash
-# Faster (less secure, for testing)
-python qr_code_backup.py encode test.txt --encrypt --argon2-time 2 --argon2-memory 32768
-
-# Slower (more secure, for critical data)
-python qr_code_backup.py encode secrets.txt --encrypt --argon2-time 5 --argon2-memory 131072
-```
-
 ### Order-Independent Decoding
 
 Pages can now be decoded in any order! If you accidentally drop your printed pages or scan them out of order, the tool automatically reorders them correctly.
@@ -701,10 +682,6 @@ A 100-page document (~900 QR codes):
 ```bash
 # Use built-in encryption (recommended)
 python qr_code_backup.py encode secrets.txt -o backup.pdf --encrypt
-
-# For maximum security, increase Argon2 parameters
-python qr_code_backup.py encode critical_data.txt -o backup.pdf --encrypt \
-  --argon2-time 5 --argon2-memory 131072 --argon2-parallelism 8
 ```
 
 **External encryption (if you need specific cipher suites):**
