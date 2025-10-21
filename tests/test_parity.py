@@ -198,6 +198,8 @@ class TestParityMetadataParsing:
         chunk.extend((0).to_bytes(2, 'big'))  # Parity index 0
         chunk.extend((1).to_bytes(2, 'big'))  # Total parity = 1
         chunk.extend((20).to_bytes(2, 'big'))  # Total data pages = 20
+        chunk.extend((5000).to_bytes(4, 'big'))  # Compressed size = 5000
+        chunk.extend((10000).to_bytes(4, 'big'))  # File size = 10000
         chunk.extend(b"parity_data_bytes")
 
         parsed = qcb.parse_binary_chunk(bytes(chunk))
@@ -208,10 +210,12 @@ class TestParityMetadataParsing:
         assert parsed['parity_index'] == 0
         assert parsed['total_parity'] == 1
         assert parsed['total_data'] == 20
+        assert parsed['compressed_size'] == 5000
+        assert parsed['file_size'] == 10000
         assert parsed['data'] == b"parity_data_bytes"
 
     def test_parity_page_structure(self):
-        """Test parity page metadata byte layout."""
+        """Test parity page metadata byte layout with enhanced metadata."""
         import hashlib
         md5 = hashlib.md5(b"test_doc").digest()
 
@@ -223,15 +227,19 @@ class TestParityMetadataParsing:
         chunk.extend((2).to_bytes(2, 'big'))  # Parity index 2
         chunk.extend((3).to_bytes(2, 'big'))  # Total parity 3
         chunk.extend((4).to_bytes(2, 'big'))  # Total data 4
+        chunk.extend((8000).to_bytes(4, 'big'))  # Compressed size 8000
+        chunk.extend((15000).to_bytes(4, 'big'))  # File size 15000
         chunk.extend(b"XYZ")  # Parity data
 
         parsed = qcb.parse_binary_chunk(bytes(chunk))
 
-        # Verify structure
-        assert len(chunk) == 1 + 16 + 2 + 1 + 2 + 2 + 2 + 3  # 29 bytes total
+        # Verify structure (enhanced metadata adds 8 bytes)
+        assert len(chunk) == 1 + 16 + 2 + 1 + 2 + 2 + 2 + 4 + 4 + 3  # 37 bytes total
         assert parsed['parity_index'] == 2
         assert parsed['total_parity'] == 3
         assert parsed['total_data'] == 4
+        assert parsed['compressed_size'] == 8000
+        assert parsed['file_size'] == 15000
 
 
 class TestParityIntegration:

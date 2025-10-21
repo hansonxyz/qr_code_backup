@@ -917,6 +917,20 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
             parity_chunk.extend(num_parity.to_bytes(2, byteorder='big'))  # Total parity pages
             parity_chunk.extend(len(chunks).to_bytes(2, byteorder='big'))  # Total data pages
 
+            # Enhanced parity metadata (for page 1 recovery)
+            compressed_size = len(data_to_chunk)  # Size before chunking
+            parity_chunk.extend(compressed_size.to_bytes(4, byteorder='big'))  # Compressed size
+            parity_chunk.extend(file_size.to_bytes(4, byteorder='big'))  # Original file size
+
+            # If encrypted, include encryption metadata (needed to decrypt if page 1 missing)
+            if encrypt:
+                parity_chunk.extend(encryption_metadata['salt'])  # 16 bytes
+                parity_chunk.extend(encryption_metadata['time_cost'].to_bytes(4, byteorder='big'))
+                parity_chunk.extend(encryption_metadata['memory_cost'].to_bytes(4, byteorder='big'))
+                parity_chunk.extend(encryption_metadata['parallelism'].to_bytes(4, byteorder='big'))
+                parity_chunk.extend(encryption_metadata['verification_hash'])  # 32 bytes
+                parity_chunk.extend(encryption_metadata['nonce'])  # 12 bytes
+
             # Parity data
             parity_chunk.extend(parity_data)
 
@@ -1186,7 +1200,8 @@ def parse_binary_chunk(chunk_binary: bytes) -> Optional[Dict[str, Any]]:
     - Data page 1 (unencrypted): [EncFlag:1][MD5:16][Page#:2][ParityFlag:1][FileSize:4][Data]
     - Data page N (encrypted): [EncFlag:1][MD5:16][Page#:2][ParityFlag:1][Data]
     - Data page N (unencrypted): [EncFlag:1][MD5:16][Page#:2][ParityFlag:1][Data]
-    - Parity page: [EncFlag:1][MD5:16][Page#:2][ParityFlag:1][ParityIdx:2][TotalParity:2][TotalData:2][ParityData]
+    - Parity page (unencrypted): [EncFlag:1][MD5:16][Page#:2][ParityFlag:1][ParityIdx:2][TotalParity:2][TotalData:2][CompressedSize:4][FileSize:4][ParityData]
+    - Parity page (encrypted): [EncFlag:1][MD5:16][Page#:2][ParityFlag:1][ParityIdx:2][TotalParity:2][TotalData:2][CompressedSize:4][FileSize:4][Salt:16][TimeCost:4][MemoryCost:4][Parallelism:4][VerifyHash:32][Nonce:12][ParityData]
 
     Encryption Flag: 0x00 = unencrypted, 0x01 = encrypted
     Parity Flag: 0x00 = data page, 0x01 = parity page
@@ -1228,8 +1243,8 @@ def parse_binary_chunk(chunk_binary: bytes) -> Optional[Dict[str, Any]]:
         }
 
         if is_parity:
-            # Parity page: need ParityIdx(2) + TotalParity(2) + TotalData(2) = 6 bytes minimum
-            if len(chunk_binary) < offset + 6:
+            # Parity page: ParityIdx(2) + TotalParity(2) + TotalData(2) + CompressedSize(4) + FileSize(4) = 14 bytes minimum
+            if len(chunk_binary) < offset + 14:
                 return None
 
             result['parity_index'] = int.from_bytes(chunk_binary[offset:offset+2], byteorder='big')
@@ -1238,7 +1253,31 @@ def parse_binary_chunk(chunk_binary: bytes) -> Optional[Dict[str, Any]]:
             offset += 2
             result['total_data'] = int.from_bytes(chunk_binary[offset:offset+2], byteorder='big')
             offset += 2
-            result['file_size'] = None  # Parity pages don't have file size
+
+            # Enhanced parity metadata (for page 1 recovery)
+            result['compressed_size'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+            offset += 4
+            result['file_size'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+            offset += 4
+
+            # If encrypted, parse encryption metadata
+            if encrypted:
+                # Need encryption metadata: Salt(16) + TimeCost(4) + MemoryCost(4) + Parallelism(4) + VerifyHash(32) + Nonce(12) = 72 bytes
+                if len(chunk_binary) < offset + 72:
+                    return None
+
+                result['salt'] = chunk_binary[offset:offset+16]
+                offset += 16
+                result['time_cost'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+                offset += 4
+                result['memory_cost'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+                offset += 4
+                result['parallelism'] = int.from_bytes(chunk_binary[offset:offset+4], byteorder='big')
+                offset += 4
+                result['verification_hash'] = chunk_binary[offset:offset+32]
+                offset += 32
+                result['nonce'] = chunk_binary[offset:offset+12]
+                offset += 12
         else:
             # Data page: Page 1 has file size and possibly encryption metadata
             if page_num == 1:
@@ -1362,16 +1401,6 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
         # Get expected data pages from parity metadata
         expected_data_pages = parity_chunks[0]['total_data']
 
-        # Check if document is encrypted (all pages have same encryption flag)
-        is_encrypted = parsed_chunks[0]['encrypted'] if parsed_chunks else False
-
-        # If encrypted and page 1 is missing, cannot recover (need encryption metadata)
-        if is_encrypted and page_1 is None:
-            raise ValueError(
-                "Cannot recover encrypted document with page 1 missing. "
-                "Page 1 contains encryption metadata (salt, nonce, etc.) which cannot be recovered via parity."
-            )
-
         # Find missing data pages
         expected_data_set = set(range(1, expected_data_pages + 1))
         actual_data_set = set(data_page_numbers)
@@ -1417,19 +1446,55 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                 # Get encryption flag from any available chunk (all pages have same flag)
                 encryption_flag = parsed_chunks[0]['encrypted'] if parsed_chunks else False
 
+                # Compute chunk data capacities from chunk_size and metadata overhead
+                # Get chunk_size from any chunk binary (they're all the same size)
+                reference_chunk_binary = chunk_binaries[0]
+                chunk_size = len(reference_chunk_binary)
+
+                # Calculate data capacities based on metadata overhead
+                # Page 1 has extra metadata (file_size + possibly encryption metadata)
+                if encryption_flag:
+                    page1_data_capacity = chunk_size - 96  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1) + FileSize(4) + EncMeta(72)
+                    other_data_capacity = chunk_size - 20  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1)
+                else:
+                    page1_data_capacity = chunk_size - 24  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1) + FileSize(4)
+                    other_data_capacity = chunk_size - 20  # EncFlag(1) + MD5(16) + Page#(2) + ParityFlag(1)
+
                 # Reconstruct data_chunks with recovered pages
+                # Calculate actual size for each chunk based on compressed_size
                 data_chunks = []
+                compressed_size_val = parity_chunks[0]['compressed_size']
+                bytes_so_far = 0
+
                 for page_num, data in enumerate(recovered_data, 1):
-                    # Find original chunk if it exists, or create placeholder
-                    original_chunk = next((c for c in parsed_chunks if c['page_number'] == page_num), None)
+                    # Find original chunk if it exists
+                    original_chunk = next((c for c in parsed_chunks if c['page_number'] == page_num and not c.get('is_parity')), None)
+
                     if original_chunk:
+                        # Use original chunk (already has correct size, no padding)
                         data_chunks.append(original_chunk)
+                        bytes_so_far += len(original_chunk['data'])
                     else:
+                        # Recovered chunk - need to strip padding
+                        # Determine capacity for this chunk
+                        if page_num == 1:
+                            capacity = page1_data_capacity
+                        else:
+                            capacity = other_data_capacity
+
+                        # Actual size is min of capacity and remaining bytes
+                        remaining = compressed_size_val - bytes_so_far
+                        actual_size = min(capacity, remaining)
+
+                        # Strip padding from recovered data
+                        recovered_chunk_data = data[:actual_size]
+                        bytes_so_far += actual_size
+
                         # Create reconstructed chunk metadata for recovered page
                         data_chunks.append({
                             'page_number': page_num,
                             'md5_hash': reference_md5,
-                            'data': data,
+                            'data': recovered_chunk_data,
                             'encrypted': encryption_flag,
                             'file_size': None,  # Will be set below for page 1
                             'is_parity': False,
@@ -1446,18 +1511,18 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                         page_1 = chunk
                         break
 
-                # Parse page 1 to get file size (may need to parse recovered data)
-                if page_1 and page_1['file_size'] is None:
-                    # Page 1 was recovered - need to parse it to get file size
-                    # Reconstruct full chunk binary for page 1
-                    chunk_idx = missing_data_pages.index(1) if 1 in missing_data_pages else -1
-                    if chunk_idx >= 0:
-                        # Page 1 was recovered, need to extract file size from data
-                        # File size is stored at offset 20-24 in encrypted chunks, or 20-24 in unencrypted
-                        # But we only have the data portion here, not the full chunk
-                        # We need to get total_data from parity metadata as file size isn't available
-                        # For now, we'll extract it after decompression
-                        pass
+                # If page 1 was recovered, populate metadata from parity chunks
+                if page_1 and page_1['file_size'] is None and 1 in missing_data_pages:
+                    # Use metadata from parity chunks
+                    page_1['file_size'] = parity_chunks[0]['file_size']
+                    if encryption_flag:
+                        # Copy encryption metadata from parity chunks
+                        page_1['salt'] = parity_chunks[0]['salt']
+                        page_1['nonce'] = parity_chunks[0]['nonce']
+                        page_1['verification_hash'] = parity_chunks[0]['verification_hash']
+                        page_1['time_cost'] = parity_chunks[0]['time_cost']
+                        page_1['memory_cost'] = parity_chunks[0]['memory_cost']
+                        page_1['parallelism'] = parity_chunks[0]['parallelism']
 
                 click.echo(f"Successfully recovered {len(missing_data_pages)} page(s)!")
 
@@ -1466,7 +1531,8 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                     'missing_pages': [],
                     'parity_recovery': len(missing_data_pages),
                     'md5_hash': reference_md5.hex(),
-                    'file_size': page_1['file_size'] if page_1 and page_1['file_size'] else None,
+                    'file_size': page_1['file_size'] if page_1 else parity_chunks[0]['file_size'],
+                    'compressed_size': parity_chunks[0]['compressed_size'],  # Track for padding removal
                 }
             except ValueError as e:
                 raise ValueError(f"Parity recovery failed: {e}")
@@ -1506,6 +1572,7 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
             )
 
     # Reassemble compressed (possibly encrypted) data from data chunks only
+    # Note: Padding has already been stripped per-chunk during recovery
     compressed_data = b''
     for chunk in data_chunks:
         compressed_data += chunk['data']
@@ -1583,8 +1650,8 @@ def cli():
               help='Output PDF path (default: <input_file>.qr.pdf)')
 @click.option('--error-correction', type=click.Choice(['L', 'M', 'Q', 'H']), default='M',
               help='Error correction level: L(7%), M(15%), Q(25%), H(30%) [default: M]')
-@click.option('--density', type=float, default=0.9,
-              help='QR code density in mm (smaller = denser). [default: 0.9]')
+@click.option('--density', type=float, default=0.8,
+              help='QR code density in mm (smaller = denser). [default: 0.8]')
 @click.option('--title', type=str, default=None,
               help='Title for page headers (default: filename)')
 @click.option('--encrypt', is_flag=True,

@@ -12,10 +12,12 @@ This document contains critical information about the QR Code Backup project arc
 
 **Core Philosophy:**
 - Optimized for files ≤ 25KB (practical limit for paper-based archival)
+- **Storage capacity: ~1.5 KB per PDF page** at default 0.8mm density
 - Maintains consistent 2×2 grid layout (4 QR codes per page)
 - Auto-calculates optimal QR version based on module density
 - Hardcoded compression (bzip2) for simplicity
 - US Letter paper as default (215.9mm × 279.4mm)
+- 5% parity overhead by default for missing page recovery
 
 ---
 
@@ -92,18 +94,25 @@ x = margin + horizontal_offset + col * (qr_size + spacing)
 
 ## Key Parameters & Defaults
 
-### Module Size: 0.9mm (default)
+### Module Size: 0.8mm (default)
 
 **Evolution:**
 - Started at 1.2mm (very safe)
 - Reduced to 1.0mm (good balance)
-- **Final: 0.9mm** (optimal balance)
+- Tested 0.9mm (optimal balance)
+- **Final: 0.8mm** (maximum density for reliable scanning)
 
 **Rationale:**
-- Still above 0.8mm warning threshold
-- Small enough for good data density
-- Large enough for reliable scanning
-- Results in Version 18 QR codes with default settings
+- Optimal balance between density and reliability
+- Small enough for excellent data density
+- Still large enough for reliable scanning with modern equipment
+- Results in Version 21 QR codes with default settings
+- **Storage capacity: ~1.5 KB of data per PDF page** (including compression + 5% parity overhead)
+
+**Storage Benchmarks (at 0.8mm density):**
+- 20 KB file → 13 PDF pages (~1.54 KB/page)
+- Encryption adds zero pages for typical files (overhead absorbed in chunks)
+- Parity at 5% adds ~1 page per 20 pages
 
 **Warning System:**
 - If user specifies < 0.8mm, display warning about data loss risk
@@ -236,15 +245,24 @@ def get_qr_capacity(qr_version, error_correction):
     # Binary mode capacities
 ```
 
-**Key Versions:**
+**Key Versions (at 0.8mm default density):**
 - Version 1: 17 modules, ~14 bytes (M correction)
 - Version 15: 77 modules, ~530 bytes (M correction)
-- Version 18: 85 modules, ~314 bytes actual after overhead (M correction)
-- Version 25: 117 modules, ~718 bytes actual after overhead (M correction)
+- **Version 21: 101 modules, ~470 bytes per QR code (M correction)** ← **Default at 0.8mm**
+- Version 25: 117 modules, ~718 bytes (M correction)
 - Version 40: 177 modules, ~2331 bytes (M correction)
 
+**At Default Settings (0.8mm density, Version 21):**
+- Chunk size: 470 bytes per QR code
+- QR codes per page: 4 (2×2 grid)
+- Raw capacity per page: ~1,880 bytes (4 × 470)
+- **Effective capacity: ~1.5 KB per page** (accounting for compression overhead + 5% parity)
+
 **Actual Capacity After Overhead:**
-- QR capacity - 300 bytes (JSON metadata) - 33% (base64 encoding)
+- Binary metadata overhead per chunk: 20-24 bytes (data pages) or 26+ bytes (parity pages)
+- Base64 encoding: +33% size increase
+- Compression: Variable (text compresses well, random data may expand)
+- Parity: Default 5% overhead (adds ~1 page per 20 pages)
 
 ---
 
@@ -367,7 +385,8 @@ rows = floor((available_height + spacing) / (qr_size + spacing))
 **Practical Limit:** ~25KB
 
 **Rationale:**
-- 25KB @ 0.9mm module = ~37 pages
+- 25KB @ 0.8mm density = ~17 pages (with 5% parity)
+- 20KB @ 0.8mm density = ~13 pages (measured)
 - Larger files = too many pages to print/scan/manage
 - Users should compress or split larger files externally
 
@@ -1503,15 +1522,23 @@ python qr_code_backup.py decode damaged_backup.pdf -o recovered.txt
 
 ## Performance Characteristics
 
+**Storage Capacity (at default 0.8mm density):**
+- **~1.5 KB per PDF page** (effective capacity including overhead)
+- 20 KB file → 13 PDF pages (51 QR codes, including 5% parity)
+- Encryption: Zero page overhead for typical files
+- Parity: ~5% overhead (default, adjustable)
+
 **Encoding Speed:**
 - ~50-100 QR codes/second
-- 5KB file (26 codes): ~1-2 seconds
-- 25KB file (80 codes): ~3-5 seconds
+- 20KB file (51 codes): ~2-3 seconds
+- 25KB file (~60 codes): ~3-5 seconds
+- Encryption adds ~200ms (Argon2id key derivation)
 
 **Decoding Speed:**
 - ~10-30 QR codes/second (depends on scan quality)
-- 5KB file: ~5-10 seconds
+- 20KB file: ~10-15 seconds
 - 25KB file: ~15-30 seconds
+- Parity recovery: ~100-200ms per recovered page
 
 **Memory Usage:**
 - Typical: 100-500 MB
@@ -1539,12 +1566,22 @@ When modifying the code, test:
 
 ## Version History
 
-### v2.0.0 (Current - Phase 2)
+### v2.1.0 (Current - Enhanced Parity Recovery)
+- **Enhanced parity metadata** - Can now recover ANY missing page including page 1
+- **Default density: 0.8mm** - Increased from 0.9mm for better storage capacity (~1.5 KB/page)
+- **Improved storage efficiency** - Version 21 QR codes at 0.8mm (was Version 18 at 0.9mm)
+- Parity pages now include compressed_size, file_size, and encryption metadata
+- Page 1 recovery works even for encrypted documents
+- Per-chunk padding removal for accurate recovery
+- 50 comprehensive tests (5 recovery scenarios + 45 previous tests)
+
+### v2.0.0 (Phase 2)
 - **Parity pages** - Reed-Solomon erasure codes for missing page recovery (Weeks 4-6)
 - **Password-based encryption** - AES-256-GCM with Argon2id key derivation (Weeks 2-3)
 - **Order-independent decoding** - Scan pages in any order (Week 1)
 - **Mixed document detection** - Immediate error on wrong pages (Week 1)
 - **Binary chunk format v2.0** - Added encryption flag and parity flag
+- 5% parity overhead by default
 - 45 comprehensive tests (19 parity + 16 encryption + 10 order-independence)
 
 ### v1.0.0 (Phase 1)

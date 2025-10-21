@@ -97,9 +97,7 @@ class TestParityRecoveryScenarios:
     def test_recover_from_first_qr_code_damaged(self):
         """Test recovery when the first QR code (page 1, contains file size) is damaged.
 
-        NOTE: This has a known limitation - parity recovers the DATA portion which was padded,
-        but we don't store the original chunk sizes. This causes MD5 mismatch due to padding.
-        This test documents the current limitation.
+        With enhanced parity metadata, we can now recover page 1!
         """
         import tempfile
         import filecmp
@@ -124,16 +122,20 @@ class TestParityRecoveryScenarios:
             removed_idx = data_chunks[0]
             chunks_with_gap = chunks[:removed_idx] + chunks[removed_idx+1:]
 
-            # This should fail due to padding issue (known limitation)
-            with pytest.raises(ValueError, match="MD5 verification failed"):
-                file_data, report = qcb.reassemble_chunks(chunks_with_gap)
+            # Decode with recovery - should work now with enhanced parity metadata!
+            file_data, report = qcb.reassemble_chunks(chunks_with_gap)
 
-            print(f"✓ Confirmed known limitation: page 1 recovery fails MD5 due to padding")
+            with open(output_file, 'wb') as f:
+                f.write(file_data)
+
+            assert filecmp.cmp(input_file, output_file)
+            assert report['parity_recovery'] == 1  # Recovered page 1
+            print(f"✓ Recovered from first QR code damaged (page 1)")
 
     def test_recover_from_page_1_completely_missing(self):
         """Test recovery when page 1 is completely missing (critical metadata).
 
-        NOTE: Same limitation as above - padding causes MD5 mismatch.
+        With enhanced parity metadata, we can now recover page 1!
         """
         import tempfile
         import filecmp
@@ -158,16 +160,20 @@ class TestParityRecoveryScenarios:
             removed_idx = data_chunks[0]
             chunks_with_gap = chunks[:removed_idx] + chunks[removed_idx+1:]
 
-            # This should fail due to padding issue (known limitation)
-            with pytest.raises(ValueError, match="MD5 verification failed"):
-                file_data, report = qcb.reassemble_chunks(chunks_with_gap)
+            # Decode with recovery - should work now!
+            file_data, report = qcb.reassemble_chunks(chunks_with_gap)
 
-            print(f"✓ Confirmed known limitation: page 1 recovery fails MD5 due to padding")
+            with open(output_file, 'wb') as f:
+                f.write(file_data)
+
+            assert filecmp.cmp(input_file, output_file)
+            assert report['parity_recovery'] == 1  # Recovered page 1
+            print(f"✓ Recovered even with page 1 completely missing")
 
     def test_recover_from_entire_first_pdf_page_missing(self):
         """Test recovery when the entire first PDF page is missing (4 QR codes including page 1).
 
-        NOTE: Same limitation - recovering page 1 causes MD5 mismatch due to padding.
+        With enhanced parity metadata, we can now recover even when the entire first page is missing!
         """
         import tempfile
         import filecmp
@@ -193,11 +199,15 @@ class TestParityRecoveryScenarios:
                 removed_indices = data_chunks[0:4]
                 chunks_with_gaps = [c for i, c in enumerate(chunks) if i not in removed_indices]
 
-                # This should fail due to padding issue (known limitation)
-                with pytest.raises(ValueError, match="MD5 verification failed"):
-                    file_data, report = qcb.reassemble_chunks(chunks_with_gaps)
+                # Decode with recovery - should work now!
+                file_data, report = qcb.reassemble_chunks(chunks_with_gaps)
 
-                print(f"✓ Confirmed known limitation: recovering page 1 fails MD5 due to padding")
+                with open(output_file, 'wb') as f:
+                    f.write(file_data)
+
+                assert filecmp.cmp(input_file, output_file)
+                assert report['parity_recovery'] == 4  # Recovered entire first PDF page
+                print(f"✓ Recovered from entire first PDF page missing (including page 1 metadata)")
 
 
 if __name__ == '__main__':

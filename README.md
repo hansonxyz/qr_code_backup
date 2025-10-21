@@ -2,13 +2,16 @@
 
 QR Code Backup is a command-line tool for archiving digital data as QR codes printed on paper. It encodes files into multi-page PDFs containing QR codes with error correction, and can decode scanned PDFs back into the original files.
 
+**Storage capacity: ~1.5 KB per printed page** at default settings (0.8mm density)
+
 [See example PDF](examples/3k_random_example.pdf)
 
 ## Features
 
+- **High density storage** - ~1.5 KB per page (20 KB file → 13 pages)
 - **Encode any file** into multi-page PDF documents containing QR codes
 - **Decode scanned PDFs** back into the original file with verification
-- **Password-based encryption** using AES-256-GCM with Argon2id key derivation
+- **Password-based encryption** using AES-256-GCM with Argon2id key derivation (zero page overhead)
 - **Parity pages** for automatic recovery from missing pages using Reed-Solomon erasure codes (5% overhead by default)
 - **Order-independent decoding** - scan pages in any order, automatic reordering
 - **Mixed document detection** - prevents accidentally mixing pages from different backups
@@ -67,7 +70,7 @@ python qr_code_backup.py encode <input_file> [OPTIONS]
 | `--encrypt` | Encrypt with password | disabled |
 | `--error-correction <L\|M\|Q\|H>` | QR error correction level | M (15%) |
 | `--parity-percent <0-100>` | Recovery overhead percentage | 5.0 |
-| `--density <mm>` | QR code size in mm | 0.9 |
+| `--density <mm>` | QR module density in mm | 0.8 |
 | `--title <text>` | Custom page header title | filename |
 
 **Examples:**
@@ -126,7 +129,12 @@ Displays metadata without decoding.
 
 ### Data Capacity
 
-Approximately 1 KB per page at default settings.
+**~1.5 KB per page** at default settings (0.8mm density, Version 21 QR codes, including 5% parity overhead).
+
+Measured benchmarks:
+- 20 KB file → 13 PDF pages (51 QR codes)
+- Encryption adds zero page overhead
+- Parity at 5% adds ~1 page per 20 data pages
 
 ### Data Format
 
