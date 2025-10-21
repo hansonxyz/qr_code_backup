@@ -312,10 +312,6 @@ Yes, with three layers of protection:
 2. **Parity Pages** - reconstructs completely missing or unreadable pages
 3. **Recovery Mode** - attempts to extract partial data from severely damaged backups
 
-### How secure is the encryption?
-
-Military-grade security using AES-256-GCM (quantum-resistant symmetric encryption) with Argon2id key derivation (memory-hard, GPU/ASIC resistant). Password never stored, only verification hash. Tampering detected automatically via GCM authentication.
-
 ### Is this suitable for large files?
 
 Practical limit is approximately 10-50 MB. Very large files become impractical due to the number of pages required. For files over 50 MB, consider splitting into chunks before encoding.
@@ -333,27 +329,6 @@ Use laser printer (toner is more stable than ink) and acid-free paper for longes
 ### What if I forget my password?
 
 Data is unrecoverable. No backdoors, no password reset. Store password separately in a password manager or safety deposit box.
-
-## Performance
-
-Typical performance on modern hardware:
-
-- **Encoding:** ~50-100 QR codes/second
-- **Decoding:** ~10-30 QR codes/second (depends on scan quality)
-- **Memory usage:** ~100-500 MB
-
-Example timings:
-- Small file (10 KB): < 5 seconds encode, < 10 seconds decode
-- Medium file (100 KB): ~10 seconds encode, ~30 seconds decode
-- Large file (1 MB): ~100 seconds encode, ~300 seconds decode
-
-## Limitations
-
-- Not suitable for very large files (practical limit ~10-50 MB)
-- Requires good scan quality (300+ DPI)
-- Time-consuming for files with 1000+ pages
-- Paper can degrade despite archival quality
-- Already-compressed files (ZIP, JPG) won't compress further
 
 ## Testing
 
@@ -382,10 +357,6 @@ Contributions are welcome. Please:
 5. Submit a pull request
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-## Security
-
-For security vulnerabilities, see [SECURITY.md](SECURITY.md) for responsible disclosure process. Do not report security issues publicly.
 
 ## License
 
