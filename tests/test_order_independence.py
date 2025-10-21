@@ -55,7 +55,8 @@ class TestOrderIndependentDecoding:
                 qrs_per_page=(2, 2),
                 qr_size_mm=81.9,
                 no_header=False,
-                total_pages=len(chunks)
+                total_pages=len(chunks),
+                chunks=chunks
             )
 
             # Reverse the PDF pages
@@ -113,7 +114,8 @@ class TestOrderIndependentDecoding:
                 qrs_per_page=(2, 2),
                 qr_size_mm=81.9,
                 no_header=False,
-                total_pages=len(chunks)
+                total_pages=len(chunks),
+                chunks=chunks
             )
 
             # Shuffle pages (e.g., for 3 pages: 0,1,2 -> 2,0,1)
@@ -174,7 +176,8 @@ class TestOrderIndependentDecoding:
                 qrs_per_page=(2, 2),
                 qr_size_mm=81.9,
                 no_header=False,
-                total_pages=len(chunks)
+                total_pages=len(chunks),
+                chunks=chunks
             )
 
             num_pages = get_pdf_page_count(pdf_file)

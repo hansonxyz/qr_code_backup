@@ -337,21 +337,25 @@ def decrypt_data(ciphertext: bytes, password: str, salt: bytes, nonce: bytes,
 def calculate_parity_count(num_data_pages: int, parity_percent: float = 5.0) -> int:
     """Calculate number of parity pages needed based on percentage.
 
+    Parity count is rounded up to the nearest multiple of 4 to ensure
+    parity QR codes fill complete pages (4 QR codes per page in 2x2 grid).
+
     Args:
         num_data_pages: Number of data pages
         parity_percent: Percentage of data pages to use as parity (0-100)
                        Default 5.0 = 5% overhead
 
     Returns:
-        Number of parity pages to generate (0 if parity_percent is 0)
+        Number of parity pages to generate, rounded to multiple of 4
+        (0 if parity_percent is 0)
 
     Example:
-        >>> calculate_parity_count(20)  # Default 5%: ceil(5% * 20) = 1
-        1
-        >>> calculate_parity_count(100)  # Default 5%: ceil(5% * 100) = 5
-        5
-        >>> calculate_parity_count(20, parity_percent=10.0)  # 10%: ceil(10% * 20) = 2
-        2
+        >>> calculate_parity_count(20)  # 5% of 20 = 1 → rounds to 4
+        4
+        >>> calculate_parity_count(100)  # 5% of 100 = 5 → rounds to 8
+        8
+        >>> calculate_parity_count(20, parity_percent=10.0)  # 10% of 20 = 2 → rounds to 4
+        4
         >>> calculate_parity_count(20, parity_percent=0.0)  # Disabled
         0
     """
@@ -359,7 +363,10 @@ def calculate_parity_count(num_data_pages: int, parity_percent: float = 5.0) -> 
         return 0
 
     import math
-    return math.ceil((parity_percent / 100.0) * num_data_pages)
+    base_count = math.ceil((parity_percent / 100.0) * num_data_pages)
+
+    # Round up to nearest multiple of 4 (for complete pages)
+    return math.ceil(base_count / 4) * 4
 
 
 def pad_chunks(chunks: List[bytes]) -> Tuple[List[bytes], int]:
@@ -961,6 +968,8 @@ def generate_pdf(qr_images: List[Image.Image], output_path: str, title: str,
                  chunks: Optional[List[bytes]] = None) -> None:
     """Create multi-page PDF from QR code images.
 
+    Parity QR codes are placed on separate pages after all data QR codes.
+
     Args:
         qr_images: List of PIL Images of QR codes
         output_path: Path for output PDF
@@ -989,14 +998,35 @@ def generate_pdf(qr_images: List[Image.Image], output_path: str, title: str,
 
     header_height = 40 * mm if not no_header else 0
 
-    total_pdf_pages = (len(qr_images) + qrs_on_page - 1) // qrs_on_page
+    # Find first parity QR index (if any)
+    first_parity_idx = None
+    if chunks:
+        for idx, chunk in enumerate(chunks):
+            parsed = parse_binary_chunk(chunk)
+            if parsed and parsed.get('is_parity'):
+                first_parity_idx = idx
+                break
+
+    # Separate data and parity QR images
+    if first_parity_idx is not None:
+        data_qr_images = qr_images[:first_parity_idx]
+        parity_qr_images = qr_images[first_parity_idx:]
+    else:
+        data_qr_images = qr_images
+        parity_qr_images = []
+
+    # Calculate pages needed
+    data_pages = (len(data_qr_images) + qrs_on_page - 1) // qrs_on_page if data_qr_images else 0
+    parity_pages = (len(parity_qr_images) + qrs_on_page - 1) // qrs_on_page if parity_qr_images else 0
+    total_pdf_pages = data_pages + parity_pages
 
     # Calculate horizontal centering offset
     grid_width = cols * qr_size + (cols - 1) * spacing
     available_width = page_width - 2 * margin
     horizontal_offset = (available_width - grid_width) / 2
 
-    for page_idx in range(total_pdf_pages):
+    # Generate data pages
+    for page_idx in range(data_pages):
         # Draw header
         if not no_header:
             c.setFont("Helvetica-Bold", 14)
@@ -1013,9 +1043,9 @@ def generate_pdf(qr_images: List[Image.Image], output_path: str, title: str,
             c.line(margin, page_height - margin - 28*mm,
                   page_width - margin, page_height - margin - 28*mm)
 
-        # Draw QR codes in grid
+        # Draw data QR codes in grid
         start_idx = page_idx * qrs_on_page
-        end_idx = min(start_idx + qrs_on_page, len(qr_images))
+        end_idx = min(start_idx + qrs_on_page, len(data_qr_images))
 
         for local_idx, qr_idx in enumerate(range(start_idx, end_idx)):
             row = local_idx // cols
@@ -1026,15 +1056,57 @@ def generate_pdf(qr_images: List[Image.Image], output_path: str, title: str,
 
             # Save QR image to temporary buffer
             img_buffer = io.BytesIO()
-            qr_images[qr_idx].save(img_buffer, format='PNG')
+            data_qr_images[qr_idx].save(img_buffer, format='PNG')
             img_buffer.seek(0)
 
             # Draw on PDF using ImageReader
             c.drawImage(ImageReader(img_buffer), x, y, width=qr_size, height=qr_size)
 
-            # Label parity pages if chunk data available
+        c.showPage()
+
+    # Generate parity pages (on separate pages after data)
+    for parity_page_idx in range(parity_pages):
+        pdf_page_idx = data_pages + parity_page_idx
+
+        # Draw header
+        if not no_header:
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(margin, page_height - margin - 5*mm, "QR Code Backup Archive")
+
+            c.setFont("Helvetica", 10)
+            c.drawString(margin, page_height - margin - 12*mm, f"Title: {title}")
+            c.drawString(margin, page_height - margin - 18*mm,
+                        f"Page {pdf_page_idx + 1} of {total_pdf_pages}")
+            c.drawString(margin, page_height - margin - 24*mm,
+                        "Decode with: qr_code_backup decode")
+
+            # Draw line
+            c.line(margin, page_height - margin - 28*mm,
+                  page_width - margin, page_height - margin - 28*mm)
+
+        # Draw parity QR codes in grid
+        start_idx = parity_page_idx * qrs_on_page
+        end_idx = min(start_idx + qrs_on_page, len(parity_qr_images))
+
+        for local_idx, qr_idx in enumerate(range(start_idx, end_idx)):
+            row = local_idx // cols
+            col = local_idx % cols
+
+            x = margin + horizontal_offset + col * (qr_size + spacing)
+            y = page_height - header_height - margin - (row + 1) * qr_size - row * spacing
+
+            # Save QR image to temporary buffer
+            img_buffer = io.BytesIO()
+            parity_qr_images[qr_idx].save(img_buffer, format='PNG')
+            img_buffer.seek(0)
+
+            # Draw on PDF using ImageReader
+            c.drawImage(ImageReader(img_buffer), x, y, width=qr_size, height=qr_size)
+
+            # Label parity pages
             if chunks and not no_header:
-                parsed = parse_binary_chunk(chunks[qr_idx])
+                chunk_idx = first_parity_idx + qr_idx
+                parsed = parse_binary_chunk(chunks[chunk_idx])
                 if parsed and parsed.get('is_parity'):
                     # Draw "PARITY" label below QR code
                     c.setFont("Helvetica-Bold", 8)
@@ -1268,17 +1340,12 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                 f"All pages must be from the same backup file."
             )
 
-    # Get file size and total pages from page 1
+    # Get file size and total pages from page 1 (if available)
     page_1 = None
     for chunk in data_chunks:  # Look in data_chunks, not all chunks
         if chunk['page_number'] == 1:
             page_1 = chunk
             break
-
-    if page_1 is None:
-        raise ValueError("Page 1 not found - cannot determine file size")
-
-    file_size = page_1['file_size']
 
     # Validate page sequence
     data_page_numbers = [c['page_number'] for c in data_chunks]
@@ -1288,12 +1355,22 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
         duplicates = [p for p in data_page_numbers if data_page_numbers.count(p) > 1]
         raise ValueError(f"Duplicate pages detected: {list(set(duplicates))}")
 
-    # If we have parity chunks, check for missing data pages
+    # If we have parity chunks, check for missing data pages (including page 1)
     if parity_chunks:
         click.echo(f"Found {len(parity_chunks)} parity page(s)")
 
         # Get expected data pages from parity metadata
         expected_data_pages = parity_chunks[0]['total_data']
+
+        # Check if document is encrypted (all pages have same encryption flag)
+        is_encrypted = parsed_chunks[0]['encrypted'] if parsed_chunks else False
+
+        # If encrypted and page 1 is missing, cannot recover (need encryption metadata)
+        if is_encrypted and page_1 is None:
+            raise ValueError(
+                "Cannot recover encrypted document with page 1 missing. "
+                "Page 1 contains encryption metadata (salt, nonce, etc.) which cannot be recovered via parity."
+            )
 
         # Find missing data pages
         expected_data_set = set(range(1, expected_data_pages + 1))
@@ -1337,6 +1414,9 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                     expected_data_pages
                 )
 
+                # Get encryption flag from any available chunk (all pages have same flag)
+                encryption_flag = parsed_chunks[0]['encrypted'] if parsed_chunks else False
+
                 # Reconstruct data_chunks with recovered pages
                 data_chunks = []
                 for page_num, data in enumerate(recovered_data, 1):
@@ -1350,14 +1430,34 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                             'page_number': page_num,
                             'md5_hash': reference_md5,
                             'data': data,
-                            'encrypted': page_1.get('encrypted', False),
-                            'file_size': None,
+                            'encrypted': encryption_flag,
+                            'file_size': None,  # Will be set below for page 1
                             'is_parity': False,
                         })
 
                 # Re-sort after recovery
                 data_chunks.sort(key=lambda x: x['page_number'])
                 data_page_numbers = [c['page_number'] for c in data_chunks]
+
+                # Update page_1 reference after recovery
+                page_1 = None
+                for chunk in data_chunks:
+                    if chunk['page_number'] == 1:
+                        page_1 = chunk
+                        break
+
+                # Parse page 1 to get file size (may need to parse recovered data)
+                if page_1 and page_1['file_size'] is None:
+                    # Page 1 was recovered - need to parse it to get file size
+                    # Reconstruct full chunk binary for page 1
+                    chunk_idx = missing_data_pages.index(1) if 1 in missing_data_pages else -1
+                    if chunk_idx >= 0:
+                        # Page 1 was recovered, need to extract file size from data
+                        # File size is stored at offset 20-24 in encrypted chunks, or 20-24 in unencrypted
+                        # But we only have the data portion here, not the full chunk
+                        # We need to get total_data from parity metadata as file size isn't available
+                        # For now, we'll extract it after decompression
+                        pass
 
                 click.echo(f"Successfully recovered {len(missing_data_pages)} page(s)!")
 
@@ -1366,7 +1466,7 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                     'missing_pages': [],
                     'parity_recovery': len(missing_data_pages),
                     'md5_hash': reference_md5.hex(),
-                    'file_size': file_size,
+                    'file_size': page_1['file_size'] if page_1 and page_1['file_size'] else None,
                 }
             except ValueError as e:
                 raise ValueError(f"Parity recovery failed: {e}")
@@ -1377,10 +1477,14 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
                 'missing_pages': [],
                 'parity_recovery': 0,
                 'md5_hash': reference_md5.hex(),
-                'file_size': file_size,
+                'file_size': page_1['file_size'] if page_1 else None,
             }
     else:
-        # No parity chunks - use original validation logic
+        # No parity chunks - page 1 is required
+        if page_1 is None:
+            raise ValueError("Page 1 not found - cannot determine file size")
+
+        # Use original validation logic
         max_page = max(data_page_numbers)
         expected_pages = set(range(1, max_page + 1))
         actual_pages = set(data_page_numbers)
@@ -1390,7 +1494,7 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
             'found_pages': len(actual_pages),
             'missing_pages': missing_pages,
             'md5_hash': reference_md5.hex(),
-            'file_size': file_size,
+            'file_size': page_1['file_size'],
         }
 
         # Check for missing pages in sequence

@@ -15,24 +15,25 @@ import qr_code_backup as qcb
 
 
 class TestParityCalculation:
-    """Tests for parity count calculation"""
+    """Tests for parity count calculation (rounded to multiples of 4)"""
 
     def test_calculate_parity_count_default(self):
-        """Test default parity count calculation (5% = ceil(n * 0.05))."""
-        assert qcb.calculate_parity_count(1) == 1      # ceil(1 * 0.05) = ceil(0.05) = 1
-        assert qcb.calculate_parity_count(20) == 1     # ceil(20 * 0.05) = ceil(1.0) = 1
-        assert qcb.calculate_parity_count(21) == 2     # ceil(21 * 0.05) = ceil(1.05) = 2
-        assert qcb.calculate_parity_count(40) == 2     # ceil(40 * 0.05) = ceil(2.0) = 2
-        assert qcb.calculate_parity_count(41) == 3     # ceil(41 * 0.05) = ceil(2.05) = 3
-        assert qcb.calculate_parity_count(100) == 5    # ceil(100 * 0.05) = ceil(5.0) = 5
+        """Test default parity count calculation (5% rounded to multiple of 4)."""
+        # All these round to 4 (minimum for complete page)
+        assert qcb.calculate_parity_count(1) == 4      # ceil(1 * 0.05) = 1 → rounds to 4
+        assert qcb.calculate_parity_count(20) == 4     # ceil(20 * 0.05) = 1 → rounds to 4
+        assert qcb.calculate_parity_count(21) == 4     # ceil(21 * 0.05) = 2 → rounds to 4
+        assert qcb.calculate_parity_count(40) == 4     # ceil(40 * 0.05) = 2 → rounds to 4
+        assert qcb.calculate_parity_count(41) == 4     # ceil(41 * 0.05) = 3 → rounds to 4
+        assert qcb.calculate_parity_count(100) == 8    # ceil(100 * 0.05) = 5 → rounds to 8
 
     def test_calculate_parity_count_custom(self):
-        """Test custom parity percentage."""
-        assert qcb.calculate_parity_count(10, parity_percent=10.0) == 1   # ceil(10 * 0.10) = 1
-        assert qcb.calculate_parity_count(100, parity_percent=10.0) == 10 # ceil(100 * 0.10) = 10
+        """Test custom parity percentage (rounded to multiple of 4)."""
+        assert qcb.calculate_parity_count(10, parity_percent=10.0) == 4   # ceil(10 * 0.10) = 1 → 4
+        assert qcb.calculate_parity_count(100, parity_percent=10.0) == 12 # ceil(100 * 0.10) = 10 → 12
         assert qcb.calculate_parity_count(10, parity_percent=0.0) == 0    # Disabled
-        assert qcb.calculate_parity_count(100, parity_percent=1.0) == 1   # ceil(100 * 0.01) = 1
-        assert qcb.calculate_parity_count(100, parity_percent=15.0) == 15 # ceil(100 * 0.15) = 15
+        assert qcb.calculate_parity_count(100, parity_percent=1.0) == 4   # ceil(100 * 0.01) = 1 → 4
+        assert qcb.calculate_parity_count(100, parity_percent=15.0) == 16 # ceil(100 * 0.15) = 15 → 16
 
 
 class TestChunkPadding:
@@ -375,17 +376,19 @@ class TestParityIntegration:
             with open(input_file, 'wb') as f:
                 f.write(test_data)
 
-            # Encode with 3% parity (should give exactly 1 parity page for ~30 data pages, can only recover 1 missing)
+            # Encode with 3% parity (ceil(30 * 0.03) = 1 → rounds to 4 parity pages)
+            # So we have 4 parity pages, which can recover up to 4 missing data pages
             chunks = qcb.create_chunks(input_file, chunk_size=100, compression='bzip2', parity_percent=3.0)
 
-            # Remove 2 data pages
+            # Remove 5 data pages (more than the 4 parity pages can recover)
             parsed_all = [qcb.parse_binary_chunk(c) for c in chunks]
             data_pages = [i for i, p in enumerate(parsed_all) if not p['is_parity']]
 
-            removed_indices = [data_pages[1], data_pages[2]]
+            # Remove 5 data pages to exceed parity capacity
+            removed_indices = [data_pages[i] for i in [1, 2, 3, 4, 5]]
             chunks_with_gaps = [c for i, c in enumerate(chunks) if i not in removed_indices]
 
-            # Should fail to recover
+            # Should fail to recover (5 missing > 4 parity pages)
             with pytest.raises(ValueError, match="Cannot recover"):
                 qcb.reassemble_chunks(chunks_with_gaps)
 

@@ -16,8 +16,6 @@ QR Code Backup is a command-line tool for archiving digital data as QR codes pri
 - **Automatic compression** using bzip2 to maximize storage efficiency
 - **Checksum verification** ensures data integrity with MD5 validation
 
-All processing is done locally with no network connectivity required.
-
 ## Use Cases
 
 - Critical document archival (legal documents, certificates, encryption keys)
@@ -128,13 +126,7 @@ Displays metadata without decoding.
 
 ### Data Capacity
 
-Approximately 1 KB per page at default settings (after compression).
-
-- Text files: ~1.0-1.5 KB per page
-- Binary/random data: ~0.8-1.0 KB per page
-- Already-compressed files: ~0.8-1.0 KB per page
-
-Default settings: QR Version 15 (77×77 modules), error correction M (15%), 2×2 grid (4 QR codes per page), bzip2 compression, 5% parity overhead.
+Approximately 1 KB per page at default settings.
 
 ### Data Format
 
@@ -194,10 +186,6 @@ pytest tests/ -v
 ```
 
 All 45 tests covering encryption, parity recovery, order independence, mixed document detection, and integration.
-
-## Contributing
-
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
