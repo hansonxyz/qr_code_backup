@@ -1075,21 +1075,23 @@ shuffle_pdf_pages('backup.pdf', 'shuffled.pdf', [2, 0, 1])
 
 1. **Vertical Parity:** Parity is computed byte-by-byte across all data chunks at each position (not treating chunks as atomic symbols)
 2. **Erasure Decoding:** Recovery when missing positions are known (vs error correction which must find errors)
-3. **Tunable Overhead:** Default ~5% (1 parity per 20 data pages), user can specify custom count
-4. **Works with Encryption:** Parity computed on ciphertext (encrypted chunks), doesn't leak plaintext
+3. **Percentage-Based:** Parity pages = ceil(parity_percent / 100 × num_data_pages). Default 5.0% gives ~1 parity page per 20 data pages
+4. **Always On by Default:** Parity is always enabled at 5% overhead (can be disabled with parity_percent=0)
+5. **Works with Encryption:** Parity computed on ciphertext (encrypted chunks), doesn't leak plaintext
 
 **Implementation Details:**
 
 1. **Core Parity Functions** (qr_code_backup.py:337-543):
    ```python
-   def calculate_parity_count(num_data_pages: int, parity_pages: Optional[int] = None) -> int:
-       """Calculate number of parity pages needed.
-       Default: ceil(num_data_pages / 20) gives ~5% overhead
+   def calculate_parity_count(num_data_pages: int, parity_percent: float = 5.0) -> int:
+       """Calculate number of parity pages based on percentage.
+       Default 5.0 = 5% overhead
+       Formula: ceil(parity_percent / 100 × num_data_pages)
        """
-       if parity_pages is not None:
-           return parity_pages
+       if parity_percent == 0.0:
+           return 0
        import math
-       return math.ceil(num_data_pages / 20)
+       return math.ceil((parity_percent / 100.0) * num_data_pages)
 
    def pad_chunks(chunks: List[bytes]) -> Tuple[List[bytes], int]:
        """Pad all chunks to same size (required for Reed-Solomon).
@@ -1337,37 +1339,46 @@ shuffle_pdf_pages('backup.pdf', 'shuffled.pdf', [2, 0, 1])
 
 **Design Decisions:**
 
-1. **Why ~5% default overhead?**
-   - Balances protection vs space (1 parity page per 20 data pages)
-   - For 20-page document: 21 pages total (5% overhead)
-   - For 100-page document: 105 pages total (5% overhead)
-   - User can increase for critical data (--parity-pages 10 = 10% overhead)
+1. **Why percentage-based parity instead of absolute page count?**
+   - More intuitive: "5% overhead" vs "1 parity page per 20 data pages"
+   - Scales automatically with document size
+   - Formula: ceil(parity_percent / 100 × num_data_pages)
+   - For 20 data pages at 5%: ceil(0.05 × 20) = 1 parity page
+   - For 100 data pages at 5%: ceil(0.05 × 100) = 5 parity pages
+   - User can easily adjust overhead (10% = double protection, 3% = less overhead)
 
-2. **Why vertical parity (byte-by-byte)?**
+2. **Why always on by default (5%)?**
+   - Long-term archival is the primary use case - degradation is expected
+   - Small overhead cost (5%) for significant reliability improvement
+   - Users don't need to remember to enable it
+   - Can be disabled for temporary/non-critical data (--parity-percent 0)
+   - Better UX: feature discovery through defaults, not flags
+
+3. **Why vertical parity (byte-by-byte)?**
    - Treats chunks as arrays of bytes, not atomic symbols
    - More efficient Reed-Solomon encoding
    - Allows recovery of variable-sized chunks after padding
    - Standard approach for erasure codes
 
-3. **Why compute parity on ciphertext (not plaintext)?**
+4. **Why compute parity on ciphertext (not plaintext)?**
    - Parity pages don't leak information about plaintext
    - Can generate parity without password
    - Can validate mixed documents without password
    - Consistent with MD5 being computed on ciphertext
 
-4. **Why pad chunks before parity generation?**
+5. **Why pad chunks before parity generation?**
    - Reed-Solomon requires all chunks to be same size
    - Last data chunk is typically shorter
    - Padding ensures uniform chunk sizes for vertical parity
    - CRITICAL: Must also pad existing chunks before recovery!
 
-5. **Why separate parity index from page number?**
+6. **Why separate parity index from page number?**
    - Page numbers are sequential across all pages (data + parity)
    - Parity index identifies position in parity set (0, 1, 2, ...)
    - Example: Pages 21-23 might be parity pages with indices 0, 1, 2
    - Allows proper ordering when reassembling parity data
 
-6. **Why include total_data in parity metadata?**
+7. **Why include total_data in parity metadata?**
    - Decoder knows how many data pages to expect
    - Can detect missing data pages even if page 1 is missing
    - Enables recovery even when first data page is lost

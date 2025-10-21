@@ -18,19 +18,21 @@ class TestParityCalculation:
     """Tests for parity count calculation"""
 
     def test_calculate_parity_count_default(self):
-        """Test default parity count calculation (ceil(n/20))."""
-        assert qcb.calculate_parity_count(1) == 1      # ceil(1/20) = 1
-        assert qcb.calculate_parity_count(20) == 1     # ceil(20/20) = 1
-        assert qcb.calculate_parity_count(21) == 2     # ceil(21/20) = 2
-        assert qcb.calculate_parity_count(40) == 2     # ceil(40/20) = 2
-        assert qcb.calculate_parity_count(41) == 3     # ceil(41/20) = 3
-        assert qcb.calculate_parity_count(100) == 5    # ceil(100/20) = 5
+        """Test default parity count calculation (5% = ceil(n * 0.05))."""
+        assert qcb.calculate_parity_count(1) == 1      # ceil(1 * 0.05) = ceil(0.05) = 1
+        assert qcb.calculate_parity_count(20) == 1     # ceil(20 * 0.05) = ceil(1.0) = 1
+        assert qcb.calculate_parity_count(21) == 2     # ceil(21 * 0.05) = ceil(1.05) = 2
+        assert qcb.calculate_parity_count(40) == 2     # ceil(40 * 0.05) = ceil(2.0) = 2
+        assert qcb.calculate_parity_count(41) == 3     # ceil(41 * 0.05) = ceil(2.05) = 3
+        assert qcb.calculate_parity_count(100) == 5    # ceil(100 * 0.05) = ceil(5.0) = 5
 
     def test_calculate_parity_count_custom(self):
-        """Test custom parity count override."""
-        assert qcb.calculate_parity_count(10, parity_pages=3) == 3
-        assert qcb.calculate_parity_count(100, parity_pages=10) == 10
-        assert qcb.calculate_parity_count(5, parity_pages=1) == 1
+        """Test custom parity percentage."""
+        assert qcb.calculate_parity_count(10, parity_percent=10.0) == 1   # ceil(10 * 0.10) = 1
+        assert qcb.calculate_parity_count(100, parity_percent=10.0) == 10 # ceil(100 * 0.10) = 10
+        assert qcb.calculate_parity_count(10, parity_percent=0.0) == 0    # Disabled
+        assert qcb.calculate_parity_count(100, parity_percent=1.0) == 1   # ceil(100 * 0.01) = 1
+        assert qcb.calculate_parity_count(100, parity_percent=15.0) == 15 # ceil(100 * 0.15) = 15
 
 
 class TestChunkPadding:
@@ -243,20 +245,20 @@ class TestParityIntegration:
             test_file = f.name
 
         try:
-            # Encode with 1 parity page
+            # Encode with 5% parity (default)
             chunks = qcb.create_chunks(
                 test_file,
                 chunk_size=200,
                 compression='bzip2',
-                parity_pages=1
+                parity_percent=5.0
             )
 
-            # Should have data chunks + 1 parity chunk
+            # Should have data chunks + parity chunks
             data_chunks = [c for c in chunks if qcb.parse_binary_chunk(c)['is_parity'] == False]
             parity_chunks = [c for c in chunks if qcb.parse_binary_chunk(c)['is_parity'] == True]
 
-            assert len(parity_chunks) == 1
-            assert len(chunks) == len(data_chunks) + 1
+            assert len(parity_chunks) >= 1  # Should have at least 1 parity page with 5%
+            assert len(chunks) == len(data_chunks) + len(parity_chunks)
 
         finally:
             os.unlink(test_file)
@@ -275,8 +277,8 @@ class TestParityIntegration:
             with open(input_file, 'wb') as f:
                 f.write(test_data)
 
-            # Encode with parity
-            chunks = qcb.create_chunks(input_file, chunk_size=250, parity_pages=1)
+            # Encode with parity (5% default)
+            chunks = qcb.create_chunks(input_file, chunk_size=250, parity_percent=5.0)
 
             # Decode with all pages present
             file_data, report = qcb.reassemble_chunks(chunks)
@@ -302,8 +304,8 @@ class TestParityIntegration:
             with open(input_file, 'wb') as f:
                 f.write(test_data)
 
-            # Encode with 1 parity page (small chunks to ensure multiple pages)
-            chunks = qcb.create_chunks(input_file, chunk_size=100, compression='bzip2', parity_pages=1)
+            # Encode with 5% parity (small chunks to ensure multiple pages, should give ~1 parity page)
+            chunks = qcb.create_chunks(input_file, chunk_size=100, compression='bzip2', parity_percent=5.0)
 
             # Remove a middle data page (not page 1, not parity)
             parsed_all = [qcb.parse_binary_chunk(c) for c in chunks]
@@ -337,8 +339,8 @@ class TestParityIntegration:
             with open(input_file, 'wb') as f:
                 f.write(test_data)
 
-            # Encode with 2 parity pages (small chunks to ensure multiple pages)
-            chunks = qcb.create_chunks(input_file, chunk_size=100, compression='bzip2', parity_pages=2)
+            # Encode with 10% parity (small chunks to ensure multiple pages, should give ~2-3 parity pages)
+            chunks = qcb.create_chunks(input_file, chunk_size=100, compression='bzip2', parity_percent=10.0)
 
             # Remove 2 data pages
             parsed_all = [qcb.parse_binary_chunk(c) for c in chunks]
@@ -356,6 +358,9 @@ class TestParityIntegration:
 
             assert filecmp.cmp(input_file, output_file)
             assert report['parity_recovery'] == 2  # Recovered 2 pages
+            # Verify we had enough parity pages
+            parity_chunks = [c for c in chunks if qcb.parse_binary_chunk(c)['is_parity']]
+            assert len(parity_chunks) >= 2  # Need at least 2 parity pages to recover 2 missing
 
     def test_cannot_recover_too_many_missing(self):
         """Test that recovery fails when too many pages missing."""
@@ -370,8 +375,8 @@ class TestParityIntegration:
             with open(input_file, 'wb') as f:
                 f.write(test_data)
 
-            # Encode with 1 parity page (can only recover 1 missing)
-            chunks = qcb.create_chunks(input_file, chunk_size=100, compression='bzip2', parity_pages=1)
+            # Encode with 3% parity (should give exactly 1 parity page for ~30 data pages, can only recover 1 missing)
+            chunks = qcb.create_chunks(input_file, chunk_size=100, compression='bzip2', parity_percent=3.0)
 
             # Remove 2 data pages
             parsed_all = [qcb.parse_binary_chunk(c) for c in chunks]

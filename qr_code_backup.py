@@ -334,30 +334,32 @@ def decrypt_data(ciphertext: bytes, password: str, salt: bytes, nonce: bytes,
 # PARITY FUNCTIONS (Reed-Solomon for page recovery)
 # ============================================================================
 
-def calculate_parity_count(num_data_pages: int, parity_pages: Optional[int] = None) -> int:
-    """Calculate number of parity pages needed.
+def calculate_parity_count(num_data_pages: int, parity_percent: float = 5.0) -> int:
+    """Calculate number of parity pages needed based on percentage.
 
     Args:
         num_data_pages: Number of data pages
-        parity_pages: User-specified count, or None for auto (ceil(n/20))
+        parity_percent: Percentage of data pages to use as parity (0-100)
+                       Default 5.0 = 5% overhead
 
     Returns:
-        Number of parity pages to generate
+        Number of parity pages to generate (0 if parity_percent is 0)
 
     Example:
-        >>> calculate_parity_count(20)  # Auto: ceil(20/20) = 1
+        >>> calculate_parity_count(20)  # Default 5%: ceil(5% * 20) = 1
         1
-        >>> calculate_parity_count(100)  # Auto: ceil(100/20) = 5
+        >>> calculate_parity_count(100)  # Default 5%: ceil(5% * 100) = 5
         5
-        >>> calculate_parity_count(10, parity_pages=3)  # Override
-        3
+        >>> calculate_parity_count(20, parity_percent=10.0)  # 10%: ceil(10% * 20) = 2
+        2
+        >>> calculate_parity_count(20, parity_percent=0.0)  # Disabled
+        0
     """
-    if parity_pages is not None:
-        return parity_pages
+    if parity_percent == 0.0:
+        return 0
 
-    # Default: ceil(num_data_pages / 20) gives ~5% overhead
     import math
-    return math.ceil(num_data_pages / 20)
+    return math.ceil((parity_percent / 100.0) * num_data_pages)
 
 
 def pad_chunks(chunks: List[bytes]) -> Tuple[List[bytes], int]:
@@ -719,7 +721,7 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
                  encrypt: bool = False, password: Optional[str] = None,
                  argon2_time: int = 3, argon2_memory: int = 65536,
                  argon2_parallelism: int = 4,
-                 parity_pages: Optional[int] = None) -> List[bytes]:
+                 parity_percent: float = 5.0) -> List[bytes]:
     """Split file into chunks with binary metadata headers, encryption, and parity support.
 
     Binary format (with encryption and parity support):
@@ -738,7 +740,8 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
         argon2_time: Argon2 time cost (default: 3)
         argon2_memory: Argon2 memory cost in KB (default: 65536 = 64MB)
         argon2_parallelism: Argon2 parallelism (default: 4)
-        parity_pages: Number of parity pages to generate (None = no parity, 0 = auto-calculate)
+        parity_percent: Parity percentage (0-100). Default 5.0 = 5% overhead.
+                       Set to 0 to disable parity. Parity pages = ceil(percent * data_pages)
 
     Returns:
         List of binary chunks including data chunks and parity chunks (if enabled)
@@ -863,62 +866,56 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
 
         chunks.append(bytes(chunk_binary))
 
-    # Generate parity pages if requested
-    if parity_pages is not None and parity_pages >= 0:
-        # Calculate number of parity pages
-        if parity_pages == 0:
-            # Auto-calculate: ceil(num_data_pages / 20)
-            num_parity = calculate_parity_count(len(chunks))
-        else:
-            num_parity = parity_pages
+    # Generate parity pages (always enabled unless parity_percent = 0)
+    num_parity = calculate_parity_count(len(chunks), parity_percent)
 
-        if num_parity > 0:
-            click.echo(f"Generating {num_parity} parity page(s)...")
+    if num_parity > 0:
+        click.echo(f"Generating {num_parity} parity page(s)...")
 
-            # Extract data portion from each chunk for parity calculation
-            # We need to extract just the data payload (after all metadata)
-            data_payloads = []
-            for chunk in chunks:
-                parsed = parse_binary_chunk(chunk)
-                if parsed:
-                    data_payloads.append(parsed['data'])
+        # Extract data portion from each chunk for parity calculation
+        # We need to extract just the data payload (after all metadata)
+        data_payloads = []
+        for chunk in chunks:
+            parsed = parse_binary_chunk(chunk)
+            if parsed:
+                data_payloads.append(parsed['data'])
 
-            # Pad data payloads to same size
-            padded_payloads, max_payload_size = pad_chunks(data_payloads)
+        # Pad data payloads to same size
+        padded_payloads, max_payload_size = pad_chunks(data_payloads)
 
-            # Generate parity chunks
-            parity_chunk_data = generate_parity_chunks(padded_payloads, num_parity)
+        # Generate parity chunks
+        parity_chunk_data = generate_parity_chunks(padded_payloads, num_parity)
 
-            # Create parity page metadata and append to chunks
-            for parity_idx, parity_data in enumerate(parity_chunk_data):
-                page_num = len(chunks) + parity_idx + 1
+        # Create parity page metadata and append to chunks
+        for parity_idx, parity_data in enumerate(parity_chunk_data):
+            page_num = len(chunks) + parity_idx + 1
 
-                # Build parity chunk with metadata
-                parity_chunk = bytearray()
+            # Build parity chunk with metadata
+            parity_chunk = bytearray()
 
-                # Encryption flag (same as data pages)
-                parity_chunk.append(encryption_flag)
+            # Encryption flag (same as data pages)
+            parity_chunk.append(encryption_flag)
 
-                # MD5 hash (same as data pages - document-level MD5)
-                parity_chunk.extend(file_md5)
+            # MD5 hash (same as data pages - document-level MD5)
+            parity_chunk.extend(file_md5)
 
-                # Page number (continues from data pages)
-                parity_chunk.extend(page_num.to_bytes(2, byteorder='big'))
+            # Page number (continues from data pages)
+            parity_chunk.extend(page_num.to_bytes(2, byteorder='big'))
 
-                # Parity flag = 0x01 (this is a parity page)
-                parity_chunk.append(0x01)
+            # Parity flag = 0x01 (this is a parity page)
+            parity_chunk.append(0x01)
 
-                # Parity metadata
-                parity_chunk.extend(parity_idx.to_bytes(2, byteorder='big'))  # Parity index
-                parity_chunk.extend(num_parity.to_bytes(2, byteorder='big'))  # Total parity pages
-                parity_chunk.extend(len(chunks).to_bytes(2, byteorder='big'))  # Total data pages
+            # Parity metadata
+            parity_chunk.extend(parity_idx.to_bytes(2, byteorder='big'))  # Parity index
+            parity_chunk.extend(num_parity.to_bytes(2, byteorder='big'))  # Total parity pages
+            parity_chunk.extend(len(chunks).to_bytes(2, byteorder='big'))  # Total data pages
 
-                # Parity data
-                parity_chunk.extend(parity_data)
+            # Parity data
+            parity_chunk.extend(parity_data)
 
-                chunks.append(bytes(parity_chunk))
+            chunks.append(bytes(parity_chunk))
 
-            click.echo(f"  Total pages: {len(chunks)} ({len(chunks) - num_parity} data + {num_parity} parity)")
+        click.echo(f"  Total pages: {len(chunks)} ({len(chunks) - num_parity} data + {num_parity} parity)")
 
     return chunks
 
@@ -1504,14 +1501,12 @@ def cli():
               help='Argon2 memory cost in KiB [default: 65536 (64MB)]')
 @click.option('--argon2-parallelism', type=int, default=4,
               help='Argon2 parallelism parameter [default: 4]')
-@click.option('--parity', is_flag=True,
-              help='Enable parity pages for recovery (auto-calculates ~5% overhead)')
-@click.option('--parity-pages', type=int, default=None,
-              help='Number of parity pages (overrides --parity auto-calculation)')
+@click.option('--parity-percent', type=float, default=5.0,
+              help='Parity percentage for recovery (0-100). Default 5.0 = 5%% overhead. Set to 0 to disable.')
 def encode(input_file, output, error_correction, module_size,
            page_width, page_height, margin, spacing, title, no_header,
            encrypt, argon2_time, argon2_memory, argon2_parallelism,
-           parity, parity_pages):
+           parity_percent):
     """Encode a file into a QR code backup PDF.
 
     Example:
@@ -1567,17 +1562,13 @@ def encode(input_file, output, error_correction, module_size,
         # Calculate chunk size
         chunk_size = calculate_chunk_size(optimal_version, error_correction)
 
-        # Determine parity configuration
-        parity_count = None
-        if parity_pages is not None:
-            # User specified exact number
-            parity_count = parity_pages
-        elif parity:
-            # Auto-calculate (0 triggers auto in create_chunks)
-            parity_count = 0
-
         # Create chunks (returns list of binary data)
+        # Parity is always enabled by default (5%) unless user sets parity_percent=0
         click.echo(f"Chunk size: {chunk_size:,} bytes per QR code")
+        if parity_percent > 0:
+            click.echo(f"Parity: {parity_percent}% overhead")
+        else:
+            click.echo(f"Parity: Disabled")
         if encrypt:
             click.echo("Compressing and encrypting...")
         chunks = create_chunks(input_file, chunk_size, compression,
@@ -1585,7 +1576,7 @@ def encode(input_file, output, error_correction, module_size,
                               argon2_time=argon2_time,
                               argon2_memory=argon2_memory,
                               argon2_parallelism=argon2_parallelism,
-                              parity_pages=parity_count)
+                              parity_percent=parity_percent)
 
         # Extract MD5 from first chunk for display (bytes 1-17, after encryption flag)
         file_md5_binary = chunks[0][1:17]
