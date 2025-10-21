@@ -1,0 +1,23 @@
+# QR Code Backup Tool - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# QR Code generation and decoding
+qrcode>=7.4.2
+Pillow>=10.0.0
+pyzbar>=0.1.9
+
+# PDF handling
+pypdf>=3.0.0
+reportlab>=4.0.0
+pdf2image>=1.16.0
+
+# Image processing for decoding
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# CLI framework
+click>=8.1.0
+
+# Testing dependencies
+pytest>=7.4.0
+pytest-cov>=4.1.0
