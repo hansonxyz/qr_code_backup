@@ -25,7 +25,6 @@ QR Code Backup is a command-line tool for archiving digital data as QR codes pri
 - Offline backup of passwords and cryptographic keys
 - Long-term data storage independent of digital media
 - Disaster recovery scenarios
-- Air-gapped data transfer
 - Time capsules and institutional archives
 
 ## Installation
