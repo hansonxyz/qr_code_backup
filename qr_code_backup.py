@@ -770,10 +770,7 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
 
     # Compress
     if compression != 'none':
-        click.echo(f"Compressing with {compression}...")
         compressed_data = compress_data(file_data, compression)
-        click.echo(f"  Original size: {file_size:,} bytes")
-        click.echo(f"  Compressed size: {len(compressed_data):,} bytes ({len(compressed_data)/file_size*100:.1f}%)")
         data_to_chunk = compressed_data
     else:
         data_to_chunk = file_data
@@ -784,7 +781,6 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
         if password is None:
             raise ValueError("Password required for encryption")
 
-        click.echo("Encrypting...")
         enc_result = encrypt_data(
             data_to_chunk,
             password,
@@ -877,8 +873,6 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
     num_parity = calculate_parity_count(len(chunks), parity_percent)
 
     if num_parity > 0:
-        click.echo(f"Generating {num_parity} parity page(s)...")
-
         # Extract data portion from each chunk for parity calculation
         # We need to extract just the data payload (after all metadata)
         data_payloads = []
@@ -935,8 +929,6 @@ def create_chunks(file_path: str, chunk_size: int, compression: str = 'bzip2',
             parity_chunk.extend(parity_data)
 
             chunks.append(bytes(parity_chunk))
-
-        click.echo(f"  Total pages: {len(chunks)} ({len(chunks) - num_parity} data + {num_parity} parity)")
 
     return chunks
 
@@ -1396,8 +1388,6 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
 
     # If we have parity chunks, check for missing data pages (including page 1)
     if parity_chunks:
-        click.echo(f"Found {len(parity_chunks)} parity page(s)")
-
         # Get expected data pages from parity metadata
         expected_data_pages = parity_chunks[0]['total_data']
 
@@ -1541,7 +1531,6 @@ def reassemble_chunks(chunk_binaries: List[bytes], verify: bool = True,
             except ValueError as e:
                 raise ValueError(f"Parity recovery failed: {e}")
         else:
-            click.echo("No missing pages, parity recovery not needed")
             report = {
                 'found_pages': len(data_chunks),
                 'missing_pages': [],
@@ -1713,25 +1702,13 @@ def encode(input_file, output, error_correction, density, title, encrypt, parity
                                            margin, spacing, header_height)
         qrs_per_page = rows * cols
 
-        # Display configuration
-        click.echo(f"\nEncoding: {input_file}")
-        if encrypt:
-            click.echo(f"Encryption: Enabled (AES-256-GCM)")
-        click.echo(f"QR Configuration: Version {optimal_version}, Error Correction {error_correction}, Density {density}mm")
-        click.echo(f"Grid Layout: {rows} rows × {cols} columns = {qrs_per_page} QR codes per page")
-
         # Calculate chunk size
         chunk_size = calculate_chunk_size(optimal_version, error_correction)
 
+        # Start encoding
+        click.echo(f"Generating {os.path.basename(output)}...", nl=False)
+
         # Create chunks (returns list of binary data)
-        # Parity is always enabled by default (5%) unless user sets parity_percent=0
-        click.echo(f"Chunk size: {chunk_size:,} bytes per QR code")
-        if parity_percent > 0:
-            click.echo(f"Parity: {parity_percent}% overhead")
-        else:
-            click.echo(f"Parity: Disabled")
-        if encrypt:
-            click.echo("Compressing and encrypting...")
         chunks = create_chunks(input_file, chunk_size, compression,
                               encrypt=encrypt, password=password,
                               argon2_time=argon2_time,
@@ -1743,29 +1720,34 @@ def encode(input_file, output, error_correction, density, title, encrypt, parity
         file_md5_binary = chunks[0][1:17]
         file_md5_hex = file_md5_binary.hex()
 
-        # Calculate number of pages needed
+        # Calculate metrics for summary
         num_pages = (len(chunks) + qrs_per_page - 1) // qrs_per_page
-        click.echo(f"QR codes required: {len(chunks)}")
-        click.echo(f"PDF pages required: {num_pages}")
+
+        # Count parity chunks
+        num_parity_chunks = sum(1 for chunk in chunks if parse_binary_chunk(chunk)['is_parity'])
+        num_parity_pages = (num_parity_chunks + qrs_per_page - 1) // qrs_per_page
+
+        # Get file size info (from first chunk if data page, or from parity chunk)
+        file_size = os.path.getsize(input_file)
 
         # Generate QR codes
-        click.echo("Generating QR codes...")
         qr_images = []
-        with click.progressbar(chunks, label='Creating QR codes') as bar:
-            for chunk_binary in bar:
-                img = create_qr_code(chunk_binary, optimal_version, error_correction)
-                qr_images.append(img)
+        for chunk_binary in chunks:
+            img = create_qr_code(chunk_binary, optimal_version, error_correction)
+            qr_images.append(img)
 
         # Generate PDF
-        click.echo("Writing PDF...")
         generate_pdf(qr_images, output, title, page_width, page_height,
                     margin, spacing, (rows, cols), qr_physical_size, False, len(chunks),
                     chunks=chunks)
 
-        # Display summary
-        click.echo(f"\nOutput: {output}")
-        click.echo(f"Verification hash (MD5): {file_md5_hex}")
-        click.echo(f"Store this hash separately to verify successful recovery.")
+        # Display streamlined summary
+        click.echo(f" Success!")
+        if num_parity_pages > 0:
+            click.echo(f"  {num_pages} pages ({num_parity_pages} parity)")
+        else:
+            click.echo(f"  {num_pages} pages")
+        click.echo(f"  MD5: {file_md5_hex}")
 
     except Exception as e:
         click.echo(f"\nError: {e}", err=True)
@@ -1792,61 +1774,50 @@ def decode(input_pdf, output, verify, recovery_mode, force, password):
         qr_code_backup decode encrypted_backup.pdf -o recovered.txt --password mypass
     """
     try:
-        click.echo(f"\nDecoding: {input_pdf}")
-
         # Convert PDF to images
-        click.echo("Converting PDF to images...")
         images = pdf_to_images(input_pdf)
-        click.echo(f"Found {len(images)} pages")
 
         # Decode QR codes from all pages with MD5 validation (returns list of binary chunks)
-        click.echo("Reading QR codes...")
         all_chunk_binaries = []
-        qr_count = 0
         reference_md5 = None
         reference_page_num = None
+        pages_out_of_order = False
 
-        with click.progressbar(images, label='Scanning pages') as bar:
-            for pdf_page_idx, image in enumerate(bar, 1):
-                chunk_binaries = decode_qr_codes_from_image(image)
+        for pdf_page_idx, image in enumerate(images, 1):
+            chunk_binaries = decode_qr_codes_from_image(image)
 
-                for chunk_binary in chunk_binaries:
-                    # Parse to check MD5 (immediate mixed document detection)
-                    parsed = parse_binary_chunk(chunk_binary)
+            for chunk_binary in chunk_binaries:
+                # Parse to check MD5 (immediate mixed document detection)
+                parsed = parse_binary_chunk(chunk_binary)
 
-                    if parsed is None:
-                        click.echo(f"\nWarning: PDF page {pdf_page_idx} - Failed to parse QR code", err=True)
-                        continue
+                if parsed is None:
+                    click.echo(f"Warning: PDF page {pdf_page_idx} - Failed to parse QR code", err=True)
+                    continue
 
-                    # Establish reference MD5 from first valid chunk
-                    if reference_md5 is None:
-                        reference_md5 = parsed['md5_hash']
-                        reference_page_num = parsed['page_number']
-                        click.echo(f"\nDocument MD5: {reference_md5.hex()}")
-                    else:
-                        # Check MD5 consistency (detect mixed documents immediately)
-                        if parsed['md5_hash'] != reference_md5:
-                            raise click.ClickException(
-                                f"\n{'='*60}\n"
-                                f"ERROR: PDF page {pdf_page_idx} contains QR code from a different document!\n\n"
-                                f"Expected MD5 (from QR page {reference_page_num}): {reference_md5.hex()}\n"
-                                f"Found MD5 (QR page {parsed['page_number']}):       {parsed['md5_hash'].hex()}\n\n"
-                                f"This PDF contains pages from multiple QR code backups.\n"
-                                f"Please ensure all PDF pages are from the same backup before decoding.\n"
-                                f"{'='*60}"
-                            )
+                # Establish reference MD5 from first valid chunk
+                if reference_md5 is None:
+                    reference_md5 = parsed['md5_hash']
+                    reference_page_num = parsed['page_number']
+                else:
+                    # Check MD5 consistency (detect mixed documents immediately)
+                    if parsed['md5_hash'] != reference_md5:
+                        raise click.ClickException(
+                            f"\n{'='*60}\n"
+                            f"ERROR: PDF page {pdf_page_idx} contains QR code from a different document!\n\n"
+                            f"Expected MD5 (from QR page {reference_page_num}): {reference_md5.hex()}\n"
+                            f"Found MD5 (QR page {parsed['page_number']}):       {parsed['md5_hash'].hex()}\n\n"
+                            f"This PDF contains pages from multiple QR code backups.\n"
+                            f"Please ensure all PDF pages are from the same backup before decoding.\n"
+                            f"{'='*60}"
+                        )
 
-                    all_chunk_binaries.append(chunk_binary)
-                    qr_count += 1
-
-        click.echo(f"Successfully decoded {qr_count} QR codes from {len(images)} PDF pages")
+                all_chunk_binaries.append(chunk_binary)
 
         if not all_chunk_binaries:
             click.echo("Error: No valid QR codes found", err=True)
             sys.exit(1)
 
-        # Analyze page order (order-independent decoding feedback)
-        click.echo("\nAnalyzing decoded pages...")
+        # Check for page order and encryption
         parsed_for_analysis = []
         for chunk_binary in all_chunk_binaries:
             parsed = parse_binary_chunk(chunk_binary)
@@ -1856,59 +1827,51 @@ def decode(input_pdf, output, verify, recovery_mode, force, password):
         if parsed_for_analysis:
             page_numbers_sorted = sorted([p['page_number'] for p in parsed_for_analysis])
             scan_order = [p['page_number'] for p in parsed_for_analysis]
-
-            click.echo(f"Detected QR pages: {page_numbers_sorted}")
-
-            # Check if pages were scanned out of order
-            if scan_order != page_numbers_sorted:
-                click.echo("Pages were scanned out of order - reordering automatically...")
+            pages_out_of_order = (scan_order != page_numbers_sorted)
 
             # Check for encryption and prompt for password if needed
             first_chunk = next((p for p in parsed_for_analysis if p['page_number'] == 1), None)
             if first_chunk and first_chunk.get('encrypted'):
-                click.echo("\nDocument is encrypted (AES-256-GCM)")
                 if password is None:
                     password = click.prompt('Enter decryption password', hide_input=True)
 
         # Reassemble file
-        click.echo("Reassembling data...")
         try:
             file_data, report = reassemble_chunks(all_chunk_binaries, verify=verify,
                                                  recovery_mode=recovery_mode,
                                                  password=password)
         except ValueError as e:
-            click.echo(f"\nError: {e}", err=True)
+            click.echo(f"Error: {e}", err=True)
             if not recovery_mode:
                 click.echo("Use --recovery-mode to attempt partial recovery", err=True)
             sys.exit(1)
 
         # Check if file exists
         if os.path.exists(output) and not force:
-            click.echo(f"\nError: Output file '{output}' already exists. Use --force to overwrite.", err=True)
+            click.echo(f"Error: Output file '{output}' already exists. Use --force to overwrite.", err=True)
             sys.exit(1)
 
         # Write output
-        click.echo(f"Decompressing..." if report['compression'] == 'bzip2' else "Writing output...")
         with open(output, 'wb') as f:
             f.write(file_data)
 
-        # Display report
-        click.echo(f"\nRecovered: {output} ({report['recovered_size']:,} bytes)")
-        click.echo(f"Original file size: {report['file_size']:,} bytes")
+        # Display streamlined summary
+        click.echo(f"Success! {os.path.basename(output)} ({report['recovered_size']:,} bytes)")
 
-        if report.get('decryption') == 'success':
-            click.echo("Decryption: SUCCESS")
+        # Show notable events
+        if pages_out_of_order:
+            click.echo(f"  Pages reordered automatically")
+        if report.get('parity_recovery', 0) > 0:
+            click.echo(f"  Recovered {report['parity_recovery']} missing page(s) from parity")
 
-        if verify:
-            if report.get('md5_verified'):
-                click.echo(f"Verification: PASS (MD5: {report['md5_hash']})")
-            elif report.get('decompression_failed'):
-                click.echo("Warning: Decompression failed - output may be corrupted!", err=True)
-            else:
-                click.echo("Verification: Skipped")
+        # MD5 verification
+        if verify and report.get('md5_verified'):
+            click.echo(f"  MD5: {report['md5_hash']} ✓")
+        elif report.get('decompression_failed'):
+            click.echo(f"  Warning: Decompression failed - output may be corrupted!", err=True)
 
-        if report['missing_pages']:
-            click.echo(f"Warning: Missing {len(report['missing_pages'])} pages: {report['missing_pages']}", err=True)
+        if report['missing_pages'] and not report.get('parity_recovery'):
+            click.echo(f"  Warning: Missing {len(report['missing_pages'])} pages: {report['missing_pages']}", err=True)
 
     except Exception as e:
         click.echo(f"\nError: {e}", err=True)
